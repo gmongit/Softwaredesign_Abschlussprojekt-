@@ -31,3 +31,24 @@ class Node:
 
     def force_vector_entries(self) -> tuple[int, float, int, float]:
         return self.dof_x, self.fx, self.dof_y, self.fy
+
+    def node_importance_from_energy(self, u: np.ndarray) -> np.ndarray:
+        importance = np.zeros(len(self.nodes), dtype=float)
+
+        for spring in self.springs:
+            if not spring.active:
+                continue
+
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+
+            if not (ni.active and nj.active):
+                continue
+
+            E = spring.strain_energy(ni, nj, u)
+
+            # Energie halb auf beide Endknoten verteilen
+            importance[ni.id] += 0.5 * E
+            importance[nj.id] += 0.5 * E
+
+        return importance

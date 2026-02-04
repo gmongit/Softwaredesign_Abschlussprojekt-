@@ -36,3 +36,17 @@ class Spring:
         k_local = self.k * np.array([[1.0, -1.0], [-1.0, 1.0]], dtype=float)  # 2x2
         Ke = np.kron(k_local, O)  # (2x2) ⊗ (2x2) -> 4x4
         return Ke
+
+    def strain_energy(self, ni: Node, nj: Node, u: np.ndarray) -> float:
+        if not self.active:
+            return 0.0
+        if not (ni.active and nj.active):
+            return 0.0
+
+        e = self.direction_unit(ni, nj)
+
+        ui = np.array([u[ni.dof_x], u[ni.dof_y]], dtype=float)
+        uj = np.array([u[nj.dof_x], u[nj.dof_y]], dtype=float)
+
+        delta = float(np.dot(e, (uj - ui)))
+        return 0.5 * self.k * delta * delta

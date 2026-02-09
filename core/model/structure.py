@@ -52,6 +52,28 @@ class Structure:
             F[node.dof_y] += node.fy
 
         return F
+    
+    def node_importance_from_energy(self, u: np.ndarray) -> np.ndarray:
+        importance = np.zeros(len(self.nodes), dtype=float)
+
+        for spring in self.springs:
+            if not spring.active:
+                continue
+
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+
+            if not (ni.active and nj.active):
+                continue
+
+            E = spring.strain_energy(ni, nj, u)
+
+            # Energie halb auf beide Endknoten verteilen
+            importance[ni.id] += 0.5 * E
+            importance[nj.id] += 0.5 * E
+
+        return importance
+
 
     def fixed_dofs(self) -> list[int]:
         fixed: list[int] = []
@@ -62,3 +84,14 @@ class Structure:
             fixed.extend(node.fixed_dofs())
 
         return fixed
+
+    def protected_node_ids(self) -> list[int]:
+        protected: list[int] = []
+        for n in self.nodes:
+            if not n.active:
+                continue
+            has_load = (abs(n.fx) > 0.0) or (abs(n.fy) > 0.0)
+            has_bc = n.fix_x or n.fix_y
+            if has_load or has_bc:
+                protected.append(n.id)
+        return protected

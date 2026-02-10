@@ -2,4 +2,3 @@ streamlit
 numpy
 matplotlib
 networkx
-pytest

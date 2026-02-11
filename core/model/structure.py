@@ -53,6 +53,21 @@ class Structure:
 
         return F
     
+    def active_node_ids(self) -> list[int]:
+        return [n.id for n in self.nodes if n.active]
+
+    def active_node_count(self) -> int:
+        return sum(1 for n in self.nodes if n.active)
+
+    def total_node_count(self) -> int:
+        return len(self.nodes)
+
+    def current_mass_fraction(self) -> float:
+        if self.total_node_count() == 0:
+            return 0.0
+        return self.active_node_count() / self.total_node_count()
+
+    
     def node_importance_from_energy(self, u: np.ndarray) -> np.ndarray:
         importance = np.zeros(len(self.nodes), dtype=float)
 

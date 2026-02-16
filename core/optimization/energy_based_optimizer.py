@@ -22,6 +22,8 @@ class EnergyBasedOptimizer(OptimizerBase):
         remove_fraction: float = 0.05,
         start_factor: float = 0.3,
         ramp_iters: int = 10,
+        enforce_symmetry: bool = False,  
+        nx: int = None,  
     ):
         if not (0.0 < remove_fraction < 1.0):
             raise ValueError("remove_fraction must be in (0, 1).")
@@ -29,10 +31,29 @@ class EnergyBasedOptimizer(OptimizerBase):
             raise ValueError("start_factor must be in (0, 1].")
         if ramp_iters < 0:
             raise ValueError("ramp_iters must be >= 0.")
+        if enforce_symmetry and nx is None:
+            raise ValueError("nx must be provided when enforce_symmetry=True.")
 
         self.remove_fraction = remove_fraction
         self.start_factor = start_factor
         self.ramp_iters = ramp_iters
+        self.enforce_symmetry = enforce_symmetry
+        self.nx = nx
+
+    def _get_mirror_node(self, node_id: int) -> int:
+        if self.nx is None:
+            raise ValueError("nx must be set for mirror calculation.")
+        row = node_id // self.nx
+        col = node_id % self.nx
+        mirror_col = (self.nx - 1) - col
+        return row * self.nx + mirror_col
+
+    def _is_on_symmetry_line(self, node_id: int) -> bool:
+        if self.nx is None:
+            raise ValueError("nx must be set for symmetry check.")
+        col = node_id % self.nx
+        mirror_col = (self.nx - 1) - col
+        return col == mirror_col
 
     def step(self, structure: Structure) -> np.ndarray:
         K = structure.assemble_K()
@@ -62,6 +83,15 @@ class EnergyBasedOptimizer(OptimizerBase):
 
         removable_sorted = sorted(removable, key=lambda i: importance[i])
 
+        
+        if self.enforce_symmetry:
+            return self._select_symmetric(structure, removable_sorted, target_remove)
+        
+        
+        else:
+            return self._select_greedy(structure, removable_sorted, target_remove)
+
+    def _select_greedy(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
         selected: list[int] = []
         exclude = set()
 
@@ -74,6 +104,44 @@ class EnergyBasedOptimizer(OptimizerBase):
             if is_valid_topology(structure, exclude_nodes=trial_exclude):
                 selected.append(nid)
                 exclude = trial_exclude
+
+        return selected
+
+    def _select_symmetric(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
+        
+        selected: list[int] = []
+        exclude = set()
+        processed = set()
+
+        for nid in removable_sorted:
+            if len(selected) >= target_remove:
+                break
+            
+            if nid in processed:
+                continue
+
+            
+            if self._is_on_symmetry_line(nid):
+                trial_exclude = exclude | {nid}
+                
+                if is_valid_topology(structure, exclude_nodes=trial_exclude):
+                    selected.append(nid)
+                    exclude = trial_exclude
+                    processed.add(nid)
+            
+            
+            else:
+                mirror_id = self._get_mirror_node(nid)
+                
+                if mirror_id in removable_sorted and mirror_id not in exclude and mirror_id not in processed:
+                    trial_exclude = exclude | {nid, mirror_id}
+                    
+                    if is_valid_topology(structure, exclude_nodes=trial_exclude):
+                        selected.append(nid)
+                        selected.append(mirror_id)
+                        exclude = trial_exclude
+                        processed.add(nid)
+                        processed.add(mirror_id)
 
         return selected
 
@@ -95,7 +163,6 @@ class EnergyBasedOptimizer(OptimizerBase):
         ramp = self.start_factor + (1.0 - self.start_factor) * t
         return self.remove_fraction * ramp
 
-
     def run(
         self,
         structure: Structure,
@@ -107,7 +174,7 @@ class EnergyBasedOptimizer(OptimizerBase):
         if max_iters <= 0:
             raise ValueError("max_iters must be > 0.")
 
-        history = OptimizationHistory(mass_fraction=[], removed_per_iter=[], active_nodes= [], max_displacement=[])
+        history = OptimizationHistory(mass_fraction=[], removed_per_iter=[], active_nodes=[], max_displacement=[])
 
         for iter_idx in range(max_iters):
             history.mass_fraction.append(structure.current_mass_fraction())
@@ -116,7 +183,6 @@ class EnergyBasedOptimizer(OptimizerBase):
                 break
             
             effective_fraction = self._effective_remove_fraction(iter_idx)
-
 
             K = structure.assemble_K()
             F = structure.assemble_F()

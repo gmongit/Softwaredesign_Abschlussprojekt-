@@ -108,7 +108,7 @@ def plot_structure(structure: Structure) -> go.Figure:
     return fig
 
 
-# --- UI ---
+
 st.title("🏗️ Structure Creator")
 
 with st.sidebar:
@@ -121,15 +121,19 @@ with st.sidebar:
     load_fy = st.number_input("Last Fy [N]",                       value=-10.0)
 
     if st.button("✅ Struktur erstellen", type="primary"):
+        
         s = create_rectangular_grid(float(width), float(height), int(nx), int(ny), float(k))
         apply_simply_supported_beam(s, int(nx), int(ny), float(load_fy))
-        st.session_state.structure = s
+
+        import copy                                        # ← neu
+        st.session_state.structure = copy.deepcopy(s)     # ← neu (Kopie für Optimizer)
+        st.session_state.original_structure = s 
         st.session_state.nx = int(nx)
         st.session_state.ny = int(ny)
         st.session_state.history = None
         st.success(f"Struktur erstellt: {int(nx) * int(ny)} Knoten, {len(s.springs)} Federn")
 
-if st.session_state.structure:
-    st.plotly_chart(plot_structure(st.session_state.structure), use_container_width=True)
+if st.session_state.get("original_structure"):
+    st.plotly_chart(plot_structure(st.session_state.original_structure), ...)
 else:
     st.info("Erstelle eine Struktur über die Sidebar.")

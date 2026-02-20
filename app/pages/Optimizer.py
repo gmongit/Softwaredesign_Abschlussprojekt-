@@ -2,6 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer
 from core.solver.solver import solve
+from heatmap import plot_heatmap
 
 def plot_structure(structure, energies=None) -> go.Figure:
     sx, sy = [], []
@@ -95,6 +96,11 @@ with st.sidebar:
 
 # Plot anzeigen (nach Optimierung)
 if st.session_state.history is not None:
-    st.plotly_chart(plot_structure(st.session_state.structure), use_container_width=True)
+    K = st.session_state.structure.assemble_K()
+    F = st.session_state.structure.assemble_F()
+    fixed = st.session_state.structure.fixed_dofs()
+    u = solve(K, F, fixed)
+    energies = st.session_state.structure.spring_energies(u)
+    st.plotly_chart(plot_heatmap(st.session_state.structure, energies=energies), use_container_width=True)
 else:
     st.info("Starte die Optimierung über die Sidebar.")

@@ -110,3 +110,17 @@ class Structure:
             if has_load or has_bc:
                 protected.append(n.id)
         return protected
+    
+    def spring_energies(self, u: np.ndarray) -> np.ndarray:
+        energies = np.zeros(len(self.springs), dtype=float)
+
+        for i, spring in enumerate(self.springs):
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            if not (ni.active and nj.active):
+                continue
+            energies[i] = spring.strain_energy(ni, nj, u)
+
+        return energies

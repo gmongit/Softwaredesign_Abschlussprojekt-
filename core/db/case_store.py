@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from tinydb import Query
 
-from core.database import db_manager
+from core.db.database import db_manager
 from core.io.structure_codec import structure_from_dict, structure_to_dict
 from core.model.structure import Structure
 
@@ -181,7 +181,8 @@ class CaseStore:
         
         if doc is None:
             raise KeyError(f"Case '{name}' nicht gefunden!")
-        
+
+        doc = dict(doc)
         structure = structure_from_dict(doc["structure"])
         history = _history_from_dict(doc.get("history"))
         

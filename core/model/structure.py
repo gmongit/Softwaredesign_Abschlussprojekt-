@@ -103,15 +103,32 @@ class Structure:
         return fixed
 
     def protected_node_ids(self) -> list[int]:
-        protected: list[int] = []
+        # Schritt 1: direkt geschützte Knoten (Lager & Lasten)
+        direct: set[int] = set()
         for n in self.nodes:
             if not n.active:
                 continue
             has_load = (abs(n.fx) > 0.0) or (abs(n.fy) > 0.0)
             has_bc = n.fix_x or n.fix_y
             if has_load or has_bc:
-                protected.append(n.id)
-        return protected
+                direct.add(n.id)
+
+        # Schritt 2: direkte Federnachbarn der geschützten Knoten ebenfalls schützen
+        # (verhindert Löcher neben Lagern, da dort die Verformungsenergie sehr klein ist)
+        neighbors: set[int] = set()
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            if not (ni.active and nj.active):
+                continue
+            if spring.node_i in direct and spring.node_j not in direct:
+                neighbors.add(spring.node_j)
+            if spring.node_j in direct and spring.node_i not in direct:
+                neighbors.add(spring.node_i)
+
+        return list(direct | neighbors)
     
 
     def update_spring_stiffnesses(self, e_modul_pa: float, beam_area_m2: float) -> None:

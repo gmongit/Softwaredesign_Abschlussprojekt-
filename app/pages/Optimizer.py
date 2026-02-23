@@ -1,7 +1,77 @@
 import streamlit as st
+import plotly.graph_objects as go
+import numpy as np
 from core.db.material_store import material_store
+from core.solver.solver import solve
 from app.service.optimization_service import prepare_structure, run_optimization, compute_forces
 from app.plots import plot_structure, plot_heatmap
+
+
+def compute_deformed_positions(structure, u: np.ndarray, scale: float = 1.0):
+    deformed = {}
+
+    for node in structure.nodes:
+        if not node.active:
+            continue
+
+        i = node.id
+        ux = u[2 * i]
+        uy = u[2 * i + 1]
+
+        x_def = node.x + scale * ux
+        y_def = node.y + scale * uy
+
+        deformed[i] = (x_def, y_def)
+
+    return deformed
+
+
+def plot_deformed_structure(structure, u, scale) -> go.Figure:
+    fig = go.Figure()
+    sx, sy = [], []
+
+    for s in structure.springs:
+        if not s.active:
+            continue
+
+        ni = structure.nodes[s.node_i]
+        nj = structure.nodes[s.node_j]
+
+        if not ni.active or not nj.active:
+            continue
+
+        ux_i = u[2 * ni.id]
+        uy_i = u[2 * ni.id + 1]
+
+        ux_j = u[2 * nj.id]
+        uy_j = u[2 * nj.id + 1]
+
+        x0 = ni.x + scale * ux_i
+        y0 = ni.y + scale * uy_i
+        x1 = nj.x + scale * ux_j
+        y1 = nj.y + scale * uy_j
+
+        sx += [x0, x1, None]
+        sy += [y0, y1, None]
+
+    fig.add_trace(go.Scatter(
+        x=sx, y=sy,
+        mode="lines",
+        line=dict(color="red", width=2),
+        showlegend=False
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="#1A1A2E",
+        plot_bgcolor="#16213E",
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                   scaleanchor="y", scaleratio=1),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=400,
+    )
+
+    return fig
 
 
 # --- UI ---
@@ -58,7 +128,7 @@ if st.session_state.history is not None:
     st.markdown("**Ansicht**")
     view = st.segmented_control(
         "Ansicht",
-        options=["Struktur", "Heatmap", "Lastpfade"],
+        options=["Struktur", "Heatmap", "Lastpfade", "Verformung"],
         default="Heatmap",
         label_visibility="collapsed",
     )
@@ -78,6 +148,23 @@ if st.session_state.history is not None:
 
     elif view == "Lastpfade":
         st.info("Lastpfade-Visualisierung folgt in einem späteren Schritt.")
+
+    elif view == "Verformung":
+        K = st.session_state.structure.assemble_K()
+        F = st.session_state.structure.assemble_F()
+        fixed = st.session_state.structure.fixed_dofs()
+        u = solve(K, F, fixed)
+
+        nodes = [n for n in st.session_state.structure.nodes if n.active]
+        x_vals = [n.x for n in nodes]
+        y_vals = [n.y for n in nodes]
+        width  = max(x_vals) - min(x_vals)
+        height = max(y_vals) - min(y_vals)
+        u_max = np.max(np.abs(u))
+        scale = 0.2 * max(width, height) / u_max if u_max > 0 else 1.0
+
+        fig = plot_deformed_structure(st.session_state.structure, u, scale)
+        st.plotly_chart(fig, use_container_width=True)
 
     if fig is not None:
         st.divider()

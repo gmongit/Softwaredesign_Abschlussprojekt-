@@ -26,49 +26,82 @@ def compute_deformed_positions(structure, u: np.ndarray, scale: float = 1.0):
     return deformed
 
 
-def plot_deformed_structure(structure, u, scale) -> go.Figure:
+def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figure:
     fig = go.Figure()
-    sx, sy = [], []
 
+    # Ausreißer clippen: max. 3x die Referenzverschiebung erlaubt
+    clip = 3.0 * u_ref if u_ref is not None and u_ref > 0 else None
+
+    # --- Unverformte Struktur (grau, dünn) als Referenz ---
+    sx_orig, sy_orig = [], []
     for s in structure.springs:
         if not s.active:
             continue
-
         ni = structure.nodes[s.node_i]
         nj = structure.nodes[s.node_j]
+        if not ni.active or not nj.active:
+            continue
+        sx_orig += [ni.x, nj.x, None]
+        sy_orig += [ni.y, nj.y, None]
 
+    fig.add_trace(go.Scatter(
+        x=sx_orig, y=sy_orig,
+        mode="lines",
+        line=dict(color="rgba(100,120,160,0.35)", width=1.0),
+        hoverinfo="skip",
+        showlegend=True,
+        name="Unverformt",
+    ))
+
+    # --- Verformte Struktur (rot) ---
+    sx_def, sy_def = [], []
+    for s in structure.springs:
+        if not s.active:
+            continue
+        ni = structure.nodes[s.node_i]
+        nj = structure.nodes[s.node_j]
         if not ni.active or not nj.active:
             continue
 
-        ux_i = u[2 * ni.id]
-        uy_i = u[2 * ni.id + 1]
+        ux_i = float(u[2 * ni.id])
+        uy_i = float(u[2 * ni.id + 1])
+        ux_j = float(u[2 * nj.id])
+        uy_j = float(u[2 * nj.id + 1])
 
-        ux_j = u[2 * nj.id]
-        uy_j = u[2 * nj.id + 1]
+        if clip is not None:
+            ux_i = float(np.clip(ux_i, -clip, clip))
+            uy_i = float(np.clip(uy_i, -clip, clip))
+            ux_j = float(np.clip(ux_j, -clip, clip))
+            uy_j = float(np.clip(uy_j, -clip, clip))
 
-        x0 = ni.x + scale * ux_i
-        y0 = ni.y + scale * uy_i
-        x1 = nj.x + scale * ux_j
-        y1 = nj.y + scale * uy_j
-
-        sx += [x0, x1, None]
-        sy += [y0, y1, None]
+        sx_def += [ni.x + scale * ux_i, nj.x + scale * ux_j, None]
+        sy_def += [ni.y + scale * uy_i, nj.y + scale * uy_j, None]
 
     fig.add_trace(go.Scatter(
-        x=sx, y=sy,
+        x=sx_def, y=sy_def,
         mode="lines",
-        line=dict(color="red", width=2),
-        showlegend=False
+        line=dict(color="#FF4444", width=2),
+        hoverinfo="skip",
+        showlegend=True,
+        name="Verformt",
     ))
 
     fig.update_layout(
         paper_bgcolor="#1A1A2E",
         plot_bgcolor="#16213E",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                   scaleanchor="y", scaleratio=1),
+        margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(
+            font=dict(color="white"),
+            bgcolor="rgba(0,0,0,0)",
+            orientation="h",
+            x=0.01, y=0.99,
+        ),
+        xaxis=dict(
+            showgrid=False, zeroline=False, showticklabels=False,
+            scaleanchor="y", scaleratio=1,
+        ),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        height=400,
+        height=450,
     )
 
     return fig
@@ -155,15 +188,29 @@ if st.session_state.history is not None:
         fixed = st.session_state.structure.fixed_dofs()
         u = solve(K, F, fixed)
 
-        nodes = [n for n in st.session_state.structure.nodes if n.active]
-        x_vals = [n.x for n in nodes]
-        y_vals = [n.y for n in nodes]
-        width  = max(x_vals) - min(x_vals)
-        height = max(y_vals) - min(y_vals)
-        u_max = np.max(np.abs(u))
-        scale = 0.2 * max(width, height) / u_max if u_max > 0 else 1.0
+        # Robuste Referenz: 95. Perzentil der nicht-null Verschiebungen
+        u_abs = np.abs(u)
+        u_nonzero = u_abs[u_abs > 0]
+        u_ref = float(np.percentile(u_nonzero, 95)) if len(u_nonzero) > 0 else 1.0
 
-        fig = plot_deformed_structure(st.session_state.structure, u, scale)
+        # Automatischer Vorschlag für den Scale
+        nodes_active = [n for n in st.session_state.structure.nodes if n.active]
+        x_vals = [n.x for n in nodes_active]
+        y_vals = [n.y for n in nodes_active]
+        width      = max(x_vals) - min(x_vals) if x_vals else 1.0
+        height_val = max(y_vals) - min(y_vals) if y_vals else 1.0
+        auto_scale = 0.15 * max(width, height_val) / u_ref if u_ref > 0 else 1.0
+
+        scale = st.slider(
+            "Skalierungsfaktor Verformung",
+            min_value=0.1,
+            max_value=float(max(10.0, auto_scale * 3)),
+            value=float(round(auto_scale, 2)),
+            step=0.1,
+            help=f"Automatischer Vorschlag: {auto_scale:.2f} | u_ref (95. Perz.): {u_ref:.2e}",
+        )
+
+        fig = plot_deformed_structure(st.session_state.structure, u, scale, u_ref=u_ref)
         st.plotly_chart(fig, use_container_width=True)
 
     if fig is not None:

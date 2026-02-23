@@ -1,6 +1,8 @@
+import io
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
+from PIL import Image
 from core.db.material_store import material_store
 from core.solver.solver import solve
 from app.service.optimization_service import prepare_structure, run_optimization, compute_forces
@@ -184,6 +186,62 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
     return fig
 
 
+def generate_replay_gif(
+    structure,
+    hist,
+    fps: int = 5,
+    width: int = 800,
+    height: int = 450,
+    on_progress=None,
+) -> bytes:
+    n_steps = len(hist.removed_nodes_per_iter)
+    total_frames = n_steps + 1  # +1 for initial frame
+
+    all_x = [n.x for n in structure.nodes]
+    all_y = [n.y for n in structure.nodes]
+    pad_x = (max(all_x) - min(all_x)) * 0.08
+    pad_y = (max(all_y) - min(all_y)) * 0.08
+    x_range = [min(all_x) - pad_x, max(all_x) + pad_x]
+    y_range = [min(all_y) - pad_y, max(all_y) + pad_y]
+
+    layout_update = dict(
+        xaxis=dict(range=x_range, showgrid=False, zeroline=False, showticklabels=False, scaleanchor="y", scaleratio=1),
+        yaxis=dict(range=y_range, showgrid=False, zeroline=False, showticklabels=False),
+    )
+
+    frames: list[Image.Image] = []
+    removed_so_far: set = set()
+
+    fig = plot_replay_structure(structure, set(), set())
+    fig.update_layout(**layout_update)
+    frames.append(Image.open(io.BytesIO(fig.to_image(format="png", width=width, height=height))).convert("RGB").quantize(colors=256))
+    if on_progress:
+        on_progress(1 / total_frames)
+
+    for s in range(n_steps):
+        just_removed = set(hist.removed_nodes_per_iter[s])
+        fig = plot_replay_structure(structure, removed_so_far, just_removed)
+        fig.update_layout(**layout_update)
+        frames.append(Image.open(io.BytesIO(fig.to_image(format="png", width=width, height=height))).convert("RGB").quantize(colors=256))
+        removed_so_far = removed_so_far | just_removed
+        if on_progress:
+            on_progress((s + 2) / total_frames)
+
+    # Letzten Frame 3 Sekunden einfrieren
+    frames.extend([frames[-1]] * max(1, fps * 3))
+
+    gif_buf = io.BytesIO()
+    frames[0].save(
+        gif_buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=1000 // fps,
+        loop=0,
+    )
+    return gif_buf.getvalue()
+
+
 # --- UI ---
 st.title("⚡ Optimizer")
 
@@ -237,6 +295,7 @@ with st.sidebar:
                 st.error(str(e))
             else:
                 st.session_state.history = hist
+                st.session_state.gif_bytes = None
                 mode = "symmetrisch" if use_symmetry else "normal"
                 st.success(f"✅ Fertig ({mode})! Masse: {st.session_state.structure.current_mass_fraction():.1%}")
 
@@ -320,6 +379,27 @@ if st.session_state.history is not None:
 
             fig = plot_replay_structure(st.session_state.structure, removed_so_far, just_removed)
             st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
+            fps = st.select_slider("FPS", options=[2, 5, 10, 15], value=5)
+            if st.button("🎬 GIF generieren"):
+                progress = st.progress(0.0, text="Frames werden gerendert...")
+                gif_bytes = generate_replay_gif(
+                    st.session_state.structure, hist, fps=fps,
+                    on_progress=lambda p: progress.progress(p, text=f"Frames werden gerendert... {p:.0%}"),
+                )
+                st.session_state.gif_bytes = gif_bytes
+                progress.empty()
+
+            if st.session_state.get("gif_bytes"):
+                base = st.session_state.get("case_name") or ""
+                filename = f"{base}_optimierung.gif" if base else "optimierung.gif"
+                st.download_button(
+                    label="📥 GIF herunterladen",
+                    data=st.session_state.gif_bytes,
+                    file_name=filename,
+                    mime="image/gif",
+                )
 
     if fig is not None and view != "Replay":
         st.divider()

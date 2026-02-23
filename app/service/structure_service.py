@@ -1,3 +1,10 @@
+from __future__ import annotations
+
+from io import BytesIO
+
+import numpy as np
+from PIL import Image
+
 from core.model.node import Node
 from core.model.spring import Spring
 from core.model.structure import Structure
@@ -47,3 +54,74 @@ def apply_simply_supported_beam(structure: Structure, nx: int, ny: int, load_fy:
 
     mid_col = nx // 2
     structure.nodes[(ny - 1) * nx + mid_col].fy = float(load_fy)
+
+
+# ── Bild → Struktur ─────────────────────────────────────────────────────────
+
+def image_to_binary_grid(
+    image_bytes: BytesIO,
+    nx: int,
+    ny: int,
+    brightness_threshold: int,
+    coverage_threshold: float,
+) -> np.ndarray:
+    """Konvertiert ein Bild in ein binäres (nx)x(ny) Grid.
+
+    Returns:
+        2D bool-Array (ny, nx) — True = Struktur (dunkel genug).
+    """
+    img = Image.open(image_bytes).convert("L")
+    pixels = np.asarray(img, dtype=np.float32)
+    img_h, img_w = pixels.shape
+
+    grid = np.zeros((ny, nx), dtype=bool)
+
+    for row in range(ny):
+        for col in range(nx):
+            y0 = int(row * img_h / ny)
+            y1 = int((row + 1) * img_h / ny)
+            x0 = int(col * img_w / nx)
+            x1 = int((col + 1) * img_w / nx)
+
+            cell = pixels[y0:y1, x0:x1]
+            if cell.size == 0:
+                continue
+
+            dark_ratio = float(np.mean(cell < brightness_threshold))
+            grid[row, col] = dark_ratio >= coverage_threshold
+
+    return grid
+
+
+def create_structure_from_image(
+    image_bytes: BytesIO,
+    nx: int,
+    ny: int,
+    brightness_threshold: int,
+    coverage_threshold: float,
+    width: float,
+    height: float,
+) -> Structure:
+    """Erstellt eine Structure aus einem Bild.
+
+    Nutzt create_rectangular_grid für die Basis-Struktur,
+    deaktiviert dann Knoten/Federn in hellen Bereichen.
+    """
+    grid = image_to_binary_grid(image_bytes, nx, ny, brightness_threshold, coverage_threshold)
+    structure = create_rectangular_grid(width, height, nx, ny)
+
+    # Knoten deaktivieren wo das Bild hell ist
+    inactive = set()
+    for row in range(ny):
+        for col in range(nx):
+            if not grid[row, col]:
+                nid = row * nx + col
+                structure.nodes[nid].active = False
+                inactive.add(nid)
+
+    # Federn deaktivieren wenn ein Endknoten inaktiv ist
+    for spring in structure.springs:
+        if spring.node_i in inactive or spring.node_j in inactive:
+            spring.active = False
+
+    return structure

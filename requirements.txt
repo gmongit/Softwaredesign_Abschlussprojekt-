@@ -5,4 +5,5 @@ kaleido
 pandas
 networkx
 tinydb
+Pillow
 pytest

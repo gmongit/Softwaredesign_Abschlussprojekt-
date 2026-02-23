@@ -34,6 +34,8 @@ def run_optimization(
     nx: int | None = None,
 ):
     """Startet die Topologie-Optimierung und gibt die History zurück."""
+
+    _validate_boundary_conditions(structure)
     opt = EnergyBasedOptimizer(
         remove_fraction=remove_fraction,
         start_factor=0.3,
@@ -42,6 +44,20 @@ def run_optimization(
         nx=nx,
     )
     return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters)
+
+def _validate_boundary_conditions(structure: Structure):
+    nodes = [n for n in structure.nodes if n.active]
+    
+    checks = {
+        "Festlager": any(n.fix_x and n.fix_y for n in nodes),
+        "Loslager":  any(n.fix_y and not n.fix_x for n in nodes),
+        "Last":     any(abs(n.fx) > 0 or abs(n.fy) > 0 for n in nodes)
+    }
+
+    missing = [name for name, found in checks.items() if not found]
+    if missing:
+        raise ValueError(f"Fehlend: {', '.join(missing)}")
+        
 
 
 def _solve_u(structure: Structure) -> np.ndarray | None:

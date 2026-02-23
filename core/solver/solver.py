@@ -37,7 +37,7 @@ def solve(K: npt.NDArray[np.float64], F: npt.NDArray[np.float64], u_fixed_idx: l
     
     except np.linalg.LinAlgError:
         # If the stiffness matrix is singular we can try a regularization to still get a solution.
-        # Use a relative eps so it works with both small (k=1) and large (k=7e9) stiffness values.
+        # Use a relative eps so it works with both small (k=1) and large (k=7e9) stiffness values. necessary for matierial based k-factors 
         eps_adaptive = max(float(np.max(np.abs(K))), 1.0) * 1e-8
         K += np.eye(K.shape[0]) * eps_adaptive
 

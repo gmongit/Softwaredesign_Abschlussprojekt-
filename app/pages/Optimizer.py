@@ -133,7 +133,10 @@ with st.sidebar:
 
     factor_of_safety = st.slider("Sicherheitsfaktor", 1.0, 10.0, 1.4, 0.1)
     st.markdown("<br>", unsafe_allow_html=True)
-    use_symmetry    = True
+    has_nx = st.session_state.nx is not None
+    use_symmetry = st.toggle("Symmetrie erzwingen", value=has_nx, disabled=not has_nx)
+    if not has_nx:
+        st.caption("Symmetrie nur bei bekanntem Raster (nx) verfügbar.")
     target_mass     = st.slider("Ziel-Massenanteil", 0.1, 1.0, 0.4, 0.01)
     remove_fraction = st.slider("Entfernungsrate / Iteration", 0.01, 0.2, 0.05, 0.01)
     max_iters       = st.number_input("Max. Iterationen", 10, 500, 120, 10)
@@ -144,17 +147,21 @@ with st.sidebar:
         except ValueError as e:
             st.error(str(e))
         else:
-            hist = run_optimization(
+            try:
+                hist = run_optimization(
                 st.session_state.structure,
                 remove_fraction=float(remove_fraction),
                 target_mass_fraction=float(target_mass),
                 max_iters=int(max_iters),
                 enforce_symmetry=use_symmetry,
                 nx=st.session_state.nx if use_symmetry else None,
-            )
-            st.session_state.history = hist
-            mode = "symmetrisch" if use_symmetry else "normal"
-            st.success(f"✅ Fertig ({mode})! Masse: {st.session_state.structure.current_mass_fraction():.1%}")
+                )
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                st.session_state.history = hist
+                mode = "symmetrisch" if use_symmetry else "normal"
+                st.success(f"✅ Fertig ({mode})! Masse: {st.session_state.structure.current_mass_fraction():.1%}")
 
 # --- Visualisierung ---
 if st.session_state.history is not None:
@@ -211,7 +218,7 @@ if st.session_state.history is not None:
         )
 
         fig = plot_deformed_structure(st.session_state.structure, u, scale, u_ref=u_ref)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     if fig is not None:
         st.divider()

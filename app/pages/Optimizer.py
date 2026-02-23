@@ -107,6 +107,83 @@ def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figu
     return fig
 
 
+def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> go.Figure:
+    fig = go.Figure()
+    all_removed = removed_so_far | just_removed
+
+    # --- Bereits entfernte Federn (sehr blass) ---
+    sx_gone, sy_gone = [], []
+    for s in structure.springs:
+        ni = structure.nodes[s.node_i]
+        nj = structure.nodes[s.node_j]
+        if ni.id in removed_so_far or nj.id in removed_so_far:
+            sx_gone += [ni.x, nj.x, None]
+            sy_gone += [ni.y, nj.y, None]
+
+    fig.add_trace(go.Scatter(
+        x=sx_gone, y=sy_gone,
+        mode="lines",
+        line=dict(color="rgba(80,80,100,0.15)", width=0.8),
+        hoverinfo="skip", showlegend=False,
+    ))
+
+    # --- Aktive Federn ---
+    sx_act, sy_act = [], []
+    for s in structure.springs:
+        ni = structure.nodes[s.node_i]
+        nj = structure.nodes[s.node_j]
+        if ni.id not in all_removed and nj.id not in all_removed:
+            sx_act += [ni.x, nj.x, None]
+            sy_act += [ni.y, nj.y, None]
+
+    fig.add_trace(go.Scatter(
+        x=sx_act, y=sy_act,
+        mode="lines",
+        line=dict(color="#4A90D9", width=1.5),
+        hoverinfo="skip", showlegend=False,
+    ))
+
+    # --- Gerade entfernte Federn (orange) ---
+    sx_rem, sy_rem = [], []
+    for s in structure.springs:
+        ni = structure.nodes[s.node_i]
+        nj = structure.nodes[s.node_j]
+        if ni.id not in removed_so_far and nj.id not in removed_so_far:
+            if ni.id in just_removed or nj.id in just_removed:
+                sx_rem += [ni.x, nj.x, None]
+                sy_rem += [ni.y, nj.y, None]
+
+    fig.add_trace(go.Scatter(
+        x=sx_rem, y=sy_rem,
+        mode="lines",
+        line=dict(color="#FF8C00", width=2),
+        hoverinfo="skip", showlegend=False,
+    ))
+
+    # --- Gerade entfernte Knoten (orange X) ---
+    rem_nodes = [structure.nodes[nid] for nid in just_removed]
+    if rem_nodes:
+        fig.add_trace(go.Scatter(
+            x=[n.x for n in rem_nodes],
+            y=[n.y for n in rem_nodes],
+            mode="markers",
+            marker=dict(color="#FF8C00", size=9, symbol="x", line=dict(width=2, color="#FF8C00")),
+            hovertext=[f"Knoten {n.id}" for n in rem_nodes],
+            hoverinfo="text", showlegend=False,
+        ))
+
+    fig.update_layout(
+        paper_bgcolor="#1A1A2E",
+        plot_bgcolor="#16213E",
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                   scaleanchor="y", scaleratio=1),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=450,
+    )
+    return fig
+
+
 # --- UI ---
 st.title("⚡ Optimizer")
 
@@ -168,7 +245,7 @@ if st.session_state.history is not None:
     st.markdown("**Ansicht**")
     view = st.segmented_control(
         "Ansicht",
-        options=["Struktur", "Heatmap", "Lastpfade", "Verformung"],
+        options=["Struktur", "Heatmap", "Lastpfade", "Verformung", "Replay"],
         default="Heatmap",
         label_visibility="collapsed",
     )
@@ -220,7 +297,31 @@ if st.session_state.history is not None:
         fig = plot_deformed_structure(st.session_state.structure, u, scale, u_ref=u_ref)
         st.plotly_chart(fig, width='stretch')
 
-    if fig is not None:
+    elif view == "Replay":
+        hist = st.session_state.history
+        n_steps = len(hist.removed_nodes_per_iter)
+
+        if n_steps == 0:
+            st.info("Keine Iterationsdaten vorhanden. Bitte Optimierung erneut starten.")
+        else:
+            step = st.slider("Schritt", 0, n_steps, 0, key="replay_slider")
+
+            mass_at_step = hist.mass_fraction[step] if step < len(hist.mass_fraction) else hist.mass_fraction[-1]
+            removed_count = sum(len(hist.removed_nodes_per_iter[s]) for s in range(step))
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Schritt", f"{step} / {n_steps}")
+            c2.metric("Massenanteil", f"{mass_at_step:.1%}")
+            c3.metric("Entfernte Knoten", removed_count)
+
+            removed_so_far: set = set()
+            for s in range(max(0, step - 1)):
+                removed_so_far.update(hist.removed_nodes_per_iter[s])
+            just_removed: set = set(hist.removed_nodes_per_iter[step - 1]) if step > 0 else set()
+
+            fig = plot_replay_structure(st.session_state.structure, removed_so_far, just_removed)
+            st.plotly_chart(fig, use_container_width=True)
+
+    if fig is not None and view != "Replay":
         st.divider()
         base = st.session_state.get("case_name") or ""
         filename = f"{base}.png" if base else "struktur.png"

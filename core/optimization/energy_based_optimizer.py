@@ -13,6 +13,7 @@ from dataclasses import dataclass
 class OptimizationHistory:
     mass_fraction: list[float]
     removed_per_iter: list[int]
+    removed_nodes_per_iter: list[list[int]]
     active_nodes: list[int]
     max_displacement: list[float]
 
@@ -174,7 +175,7 @@ class EnergyBasedOptimizer(OptimizerBase):
         if max_iters <= 0:
             raise ValueError("max_iters must be > 0.")
 
-        history = OptimizationHistory(mass_fraction=[], removed_per_iter=[], active_nodes=[], max_displacement=[])
+        history = OptimizationHistory(mass_fraction=[], removed_per_iter=[], removed_nodes_per_iter=[], active_nodes=[], max_displacement=[])
 
         for iter_idx in range(max_iters):
             history.mass_fraction.append(structure.current_mass_fraction())
@@ -206,5 +207,6 @@ class EnergyBasedOptimizer(OptimizerBase):
 
             self._deactivate_nodes(structure, candidates)
             history.removed_per_iter.append(len(candidates))
+            history.removed_nodes_per_iter.append(list(candidates))
 
         return history

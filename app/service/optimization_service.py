@@ -1,0 +1,67 @@
+import numpy as np
+
+from core.model.structure import Structure
+from core.db.material_store import material_store
+from core.optimization.energy_based_optimizer import EnergyBasedOptimizer
+from core.solver.solver import solve
+
+
+def prepare_structure(structure: Structure, material_name: str | None, beam_area_mm2: float) -> None:
+    """
+    Bereitet die Struktur für die Optimierung vor:
+    lädt das Material aus DB, rechnet Einheiten um
+    und setzt alle Federsteifigkeiten k = E * A / L.
+
+    Raises:
+        ValueError: Wenn kein Material ausgewählt wurde oder keines in der DB hinterlegt ist
+    """
+    if not material_store.list_materials():
+        raise ValueError("Kein Material in der Datenbank hinterlegt.")
+    if material_name is None:
+        raise ValueError("Kein Material ausgewählt.")
+    mat = material_store.load_material(material_name)
+    e_pa = mat.e_modul * 1e9        # GPa → Pa
+    area_m2 = beam_area_mm2 * 1e-6  # mm² → m²
+    structure.update_spring_stiffnesses(e_pa, area_m2)
+
+
+def run_optimization(
+    structure: Structure,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    enforce_symmetry: bool = True,
+    nx: int | None = None,
+):
+    """Startet die Topologie-Optimierung und gibt die History zurück."""
+    opt = EnergyBasedOptimizer(
+        remove_fraction=remove_fraction,
+        start_factor=0.3,
+        ramp_iters=10,
+        enforce_symmetry=enforce_symmetry,
+        nx=nx,
+    )
+    return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters)
+
+
+def _solve_u(structure: Structure) -> np.ndarray | None:
+    K = structure.assemble_K()
+    F = structure.assemble_F()
+    fixed = structure.fixed_dofs()
+    return solve(K, F, fixed)
+
+
+def compute_energies(structure: Structure) -> np.ndarray | None:
+    """Berechnet Formänderungsenergie pro Feder. Gibt None bei singulärer Matrix zurück."""
+    u = _solve_u(structure)
+    if u is None:
+        return None
+    return structure.spring_energies(u)
+
+
+def compute_forces(structure: Structure) -> np.ndarray | None:
+    """Berechnet Axialkraft pro Feder. Gibt None bei singulärer Matrix zurück."""
+    u = _solve_u(structure)
+    if u is None:
+        return None
+    return structure.spring_forces(u)

@@ -23,7 +23,7 @@ class EnergyBasedOptimizer(OptimizerBase):
         start_factor: float = 0.3,
         ramp_iters: int = 10,
         enforce_symmetry: bool = False,  
-        nx: int = None,  
+        nx: int | None = None,  
     ):
         if not (0.0 < remove_fraction < 1.0):
             raise ValueError("remove_fraction must be in (0, 1).")
@@ -189,6 +189,8 @@ class EnergyBasedOptimizer(OptimizerBase):
             fixed = structure.fixed_dofs()
 
             u = solve(K, F, fixed)
+            if u is None:
+                break
 
             max_u = float(np.max(np.abs(u))) if u.size > 0 else 0.0
             history.max_displacement.append(max_u)

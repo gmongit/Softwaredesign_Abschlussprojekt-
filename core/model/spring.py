@@ -42,11 +42,21 @@ class Spring:
             return 0.0
         if not (ni.active and nj.active):
             return 0.0
-
         e = self.direction_unit(ni, nj)
-
         ui = np.array([u[ni.dof_x], u[ni.dof_y]], dtype=float)
         uj = np.array([u[nj.dof_x], u[nj.dof_y]], dtype=float)
-
         delta = float(np.dot(e, (uj - ui)))
         return 0.5 * self.k * delta * delta
+
+    def axial_force(self, ni: Node, nj: Node, u: np.ndarray) -> float:
+        if not self.active or not (ni.active and nj.active):
+            return 0.0
+        e = self.direction_unit(ni, nj)
+        ui = np.array([u[ni.dof_x], u[ni.dof_y]], dtype=float)
+        uj = np.array([u[nj.dof_x], u[nj.dof_y]], dtype=float)
+        delta = float(np.dot(e, (uj - ui)))
+        return abs(self.k * delta)
+
+    def compute_k(self, ni: Node, nj: Node, e_modul_pa: float, beam_area_m2: float) -> float:
+        """Berechnet die Federsteifigkeit k = E * A / L."""
+        return e_modul_pa * beam_area_m2 / self.length(ni, nj)

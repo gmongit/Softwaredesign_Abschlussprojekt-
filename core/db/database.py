@@ -5,11 +5,11 @@ class _DatabaseManager:
     """
     Interner DatabaseManager.
     """
-    def __init__(self, db_path="data.json"):
+    def __init__(self, db_path="data/data.json"):
         """
         Initialisiert den DatabaseManager.
 
-        Pfad zur Datenbank-Datei (standart: "data.json")
+        Pfad zur DB-Datei: data/data.json
         """
         self.db_path = db_path
         self._db = None
@@ -44,7 +44,6 @@ class _DatabaseManager:
         if self._db is not None:
             self._db.close()
             self._db = None
-
 
 # Singleton-Instanz
 db_manager = _DatabaseManager()

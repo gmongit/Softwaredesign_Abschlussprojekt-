@@ -98,10 +98,10 @@ class MaterialStore:
                 Material.name == old_name
             )
         else:
-            # Name hat sich geändert: prüfen ob neuer Name frei ist
             if table.contains(Material.name == new_name):
                 raise ValueError(f"Material '{new_name}' existiert bereits!")
-            # Altes löschen, neues anlegen
+            
+            #  löschen & neues anlegen
             table.remove(Material.name == old_name)
             table.insert({
                 'name': new_name,

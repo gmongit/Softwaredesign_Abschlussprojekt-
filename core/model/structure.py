@@ -95,8 +95,10 @@ class Structure:
 
         for node in self.nodes:
             if not node.active:
-                continue
-            fixed.extend(node.fixed_dofs())
+                fixed.append(node.dof_x)
+                fixed.append(node.dof_y)
+            else:
+                fixed.extend(node.fixed_dofs())
 
         return fixed
 
@@ -111,9 +113,24 @@ class Structure:
                 protected.append(n.id)
         return protected
     
-    def spring_energies(self, u: np.ndarray) -> np.ndarray:
-        energies = np.zeros(len(self.springs), dtype=float)
 
+    def update_spring_stiffnesses(self, e_modul_pa: float, beam_area_m2: float) -> None:
+        """
+        Setzt k = E * A / L fuer alle aktiven Federn.
+
+        Args:
+            e_modul_pa: E-Modul in Pa
+            beam_area_m2: Querschnittsflaeche in m2
+        """
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            spring.k = spring.compute_k(ni, nj, e_modul_pa, beam_area_m2)
+
+    def _per_spring_values(self, u: np.ndarray, fn) -> np.ndarray:
+        values = np.zeros(len(self.springs), dtype=float)
         for i, spring in enumerate(self.springs):
             if not spring.active:
                 continue
@@ -121,6 +138,12 @@ class Structure:
             nj = self.nodes[spring.node_j]
             if not (ni.active and nj.active):
                 continue
-            energies[i] = spring.strain_energy(ni, nj, u)
+            values[i] = fn(spring, ni, nj, u)
+        return values
 
-        return energies
+    def spring_energies(self, u: np.ndarray) -> np.ndarray:
+        return self._per_spring_values(u, lambda s, ni, nj, u: s.strain_energy(ni, nj, u))
+
+    def spring_forces(self, u: np.ndarray) -> np.ndarray:
+        return self._per_spring_values(u, lambda s, ni, nj, u: s.axial_force(ni, nj, u))
+    

@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 from core.db.material_store import material_store
 
 
@@ -13,7 +12,7 @@ def show_delete_dialog():
         st.info("Keine Materialien vorhanden.")
         return
     to_delete = st.selectbox("Material auswählen", [m.name for m in materials])
-    if st.button("🗑️ Löschen", type="primary", use_container_width=True):
+    if st.button("🗑️ Löschen", type="primary", width='stretch'):
         material_store.delete_material(to_delete)
         st.rerun()
 
@@ -32,7 +31,7 @@ def show_edit_dialog():
     streckgrenze = st.number_input("Streckgrenze in MPa", value=mat.streckgrenze)
     dichte = st.number_input("Dichte in kg/m³", value=mat.dichte)
 
-    if st.button("💾 Speichern", type="primary", use_container_width=True):
+    if st.button("💾 Speichern", type="primary", width='stretch'):
         try:
             material_store.edit_material(to_edit, new_name, e_modul, streckgrenze, dichte)
             st.rerun()
@@ -48,11 +47,11 @@ with st.form("material_form", clear_on_submit=True):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        submitted = st.form_submit_button("✅ Hinzufügen", use_container_width=True)
+        submitted = st.form_submit_button("✅ Hinzufügen", width='stretch')
     with col2:
-        edit_clicked = st.form_submit_button("✏️ Bearbeiten", use_container_width=True)
+        edit_clicked = st.form_submit_button("✏️ Bearbeiten", width='stretch')
     with col3:
-        delete_clicked = st.form_submit_button("🗑️ Löschen", use_container_width=True)
+        delete_clicked = st.form_submit_button("🗑️ Löschen", width='stretch')
 
 if submitted:
     try:
@@ -74,16 +73,19 @@ st.subheader("Alle Materialien")
 materials = material_store.list_materials()
 
 if materials:
-    df = pd.DataFrame([
-        {
-            "Name": m.name,
-            "E-Modul (GPa)": m.e_modul,
-            "Streckgrenze (MPa)": m.streckgrenze,
-            "Dichte (kg/m³)": m.dichte,
-        }
-        for m in materials
-    ])
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.caption(f"📊 Gesamt: {len(df)} Materialien")
+    st.dataframe(
+        [
+            {
+                "Name": m.name,
+                "E-Modul (GPa)": m.e_modul,
+                "Streckgrenze (MPa)": m.streckgrenze,
+                "Dichte (kg/m³)": m.dichte,
+            }
+            for m in materials
+        ],
+        width='stretch',
+        hide_index=True,
+    )
+    st.caption(f"📊 Gesamt: {len(materials)} Materialien")
 else:
     st.info("Noch keine Materialien vorhanden.")

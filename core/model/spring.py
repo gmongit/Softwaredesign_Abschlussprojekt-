@@ -60,3 +60,7 @@ class Spring:
     def compute_k(self, ni: Node, nj: Node, e_modul_pa: float, beam_area_m2: float) -> float:
         """Berechnet die Federsteifigkeit k = E * A / L."""
         return e_modul_pa * beam_area_m2 / self.length(ni, nj)
+
+    def compute_mass(self, ni: Node, nj: Node, density: float, beam_area_m2: float) -> float:
+        """Berechnet die Stabmasse m = ρ · A · L."""
+        return density * beam_area_m2 * self.length(ni, nj)

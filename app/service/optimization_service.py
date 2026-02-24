@@ -22,7 +22,8 @@ def prepare_structure(structure: Structure, material_name: str | None, beam_area
     mat = material_store.load_material(material_name)
     e_pa = mat.e_modul * 1e9        # GPa → Pa
     area_m2 = beam_area_mm2 * 1e-6  # mm² → m²
-    structure.update_spring_stiffnesses(e_pa, area_m2)
+    density = mat.dichte            # kg/m³
+    structure.update_spring_stiffnesses(e_pa, area_m2, density)
 
 
 def run_optimization(
@@ -47,7 +48,7 @@ def run_optimization(
 
 def _validate_boundary_conditions(structure: Structure):
     nodes = [n for n in structure.nodes if n.active]
-    
+
     checks = {
         "Festlager": any(n.fix_x and n.fix_y for n in nodes),
         "Loslager":  any(n.fix_y and not n.fix_x for n in nodes),
@@ -57,19 +58,28 @@ def _validate_boundary_conditions(structure: Structure):
     missing = [name for name, found in checks.items() if not found]
     if missing:
         raise ValueError(f"Fehlend: {', '.join(missing)}")
-        
+
+    if not structure.is_valid_topology():
+        raise ValueError("Struktur ist nicht zusammenhängend oder Lastpfad zu Lager unterbrochen.")
 
 
-def _solve_u(structure: Structure) -> np.ndarray | None:
+
+def compute_displacement(structure: Structure) -> np.ndarray | None:
+    """Löst das Gleichungssystem K·u = F. Gibt None bei singulärer Matrix zurück."""
     K = structure.assemble_K()
     F = structure.assemble_F()
     fixed = structure.fixed_dofs()
     return solve(K, F, fixed)
 
 
+# UNUSED — ersetzt durch compute_displacement
+def _solve_u(structure: Structure) -> np.ndarray | None:
+    return compute_displacement(structure)
+
+
 def compute_energies(structure: Structure) -> np.ndarray | None:
     """Berechnet Formänderungsenergie pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = _solve_u(structure)
+    u = compute_displacement(structure)
     if u is None:
         return None
     return structure.spring_energies(u)
@@ -77,7 +87,7 @@ def compute_energies(structure: Structure) -> np.ndarray | None:
 
 def compute_forces(structure: Structure) -> np.ndarray | None:
     """Berechnet Axialkraft pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = _solve_u(structure)
+    u = compute_displacement(structure)
     if u is None:
         return None
     return structure.spring_forces(u)

@@ -41,6 +41,7 @@ def create_rectangular_grid(width: float, height: float, nx: int, ny: int) -> St
     return Structure(nodes=nodes, springs=springs)
 
 
+# UNUSED — wird durch set_festlager/set_loslager/set_last ersetzt
 def apply_simply_supported_beam(structure: Structure, nx: int, ny: int, load_fy: float) -> None:
     for n in structure.nodes:
         n.fix_x = False
@@ -110,7 +111,7 @@ def create_structure_from_image(
     grid = image_to_binary_grid(image_bytes, nx, ny, brightness_threshold, coverage_threshold)
     structure = create_rectangular_grid(width, height, nx, ny)
 
-    # Knoten deaktivieren wo das Bild hell ist
+
     inactive = set()
     for row in range(ny):
         for col in range(nx):
@@ -119,9 +120,79 @@ def create_structure_from_image(
                 structure.nodes[nid].active = False
                 inactive.add(nid)
 
-    # Federn deaktivieren wenn ein Endknoten inaktiv ist
+
     for spring in structure.springs:
         if spring.node_i in inactive or spring.node_j in inactive:
             spring.active = False
 
     return structure
+
+
+# ── Randbedingungen Lager und Last setzen ──────────────────────────────────
+
+def _clear_bc(structure: Structure, node_id: int, predicate):
+    """Entfernt Lager und Last von allen Knoten die predicate erfüllen, außer node_id."""
+    for n in structure.nodes:
+        if n.id != node_id and n.active and predicate(n):
+            n.fix_x = False
+            n.fix_y = False
+            n.fx = 0.0
+            n.fy = 0.0
+
+
+def set_festlager(structure: Structure, node_id: int) -> bool:
+    """Setzt/entfernt Festlager. Entfernt vorheriges. Gibt True zurück wenn gesetzt."""
+    node = structure.nodes[node_id]
+    is_set = node.fix_x and node.fix_y
+    if not is_set:
+        _clear_bc(structure, node_id, lambda n: n.fix_x and n.fix_y)
+    node.fix_x = not is_set
+    node.fix_y = not is_set
+    node.fx = 0.0
+    node.fy = 0.0
+    return not is_set
+
+
+def set_loslager(structure: Structure, node_id: int) -> bool:
+    """Setzt/entfernt Loslager. Entfernt vorheriges. Gibt True zurück wenn gesetzt."""
+    node = structure.nodes[node_id]
+    is_set = node.fix_y and not node.fix_x
+    if not is_set:
+        _clear_bc(structure, node_id, lambda n: n.fix_y and not n.fix_x)
+    node.fix_y = not is_set
+    node.fix_x = False
+    node.fx = 0.0
+    node.fy = 0.0
+    return not is_set
+
+
+def set_last(structure: Structure, node_id: int, fy: float) -> bool:
+    """Setzt/entfernt Last. Entfernt vorherige. Gibt True zurück wenn gesetzt."""
+    node = structure.nodes[node_id]
+    is_set = abs(node.fy) > 0
+    if not is_set:
+        _clear_bc(structure, node_id, lambda n: abs(n.fx) > 0 or abs(n.fy) > 0)
+    node.fy = 0.0 if is_set else float(fy)
+    node.fix_x = False
+    node.fix_y = False
+    return not is_set
+
+
+
+def toggle_node(structure: Structure, node_id: int) -> bool:
+    """Schaltet Knoten aktiv/inaktiv und aktualisiert betroffene Federn.
+
+    Returns:
+        Neuer active-Status des Knotens.
+    """
+    node = structure.nodes[node_id]
+    new_active = not node.active
+    node.active = new_active
+
+    for s in structure.springs:
+        if s.node_i == node_id or s.node_j == node_id:
+            ni_active = structure.nodes[s.node_i].active
+            nj_active = structure.nodes[s.node_j].active
+            s.active = ni_active and nj_active
+
+    return new_active

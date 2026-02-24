@@ -1,14 +1,22 @@
-import io
-import streamlit as st
-import plotly.graph_objects as go
 import numpy as np
-from PIL import Image
+import streamlit as st
 from core.db.material_store import material_store
-from core.solver.solver import solve
-from app.service.optimization_service import prepare_structure, run_optimization, compute_forces
-from app.plots import plot_structure, plot_heatmap
+from app.service.optimization_service import (
+    prepare_structure,
+    run_optimization,
+    compute_displacement,
+    compute_forces,
+)
+from app.plots import (
+    plot_structure,
+    plot_heatmap,
+    plot_deformed_structure,
+    plot_replay_structure,
+    generate_replay_gif,
+)
 
 
+# UNUSED — Logik ist in plot_deformed_structure integriert
 def compute_deformed_positions(structure, u: np.ndarray, scale: float = 1.0):
     deformed = {}
 
@@ -26,220 +34,6 @@ def compute_deformed_positions(structure, u: np.ndarray, scale: float = 1.0):
         deformed[i] = (x_def, y_def)
 
     return deformed
-
-
-def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figure:
-    fig = go.Figure()
-
-    # Ausreißer clippen: max. 3x die Referenzverschiebung erlaubt
-    clip = 3.0 * u_ref if u_ref is not None and u_ref > 0 else None
-
-    # --- Unverformte Struktur (grau, dünn) als Referenz ---
-    sx_orig, sy_orig = [], []
-    for s in structure.springs:
-        if not s.active:
-            continue
-        ni = structure.nodes[s.node_i]
-        nj = structure.nodes[s.node_j]
-        if not ni.active or not nj.active:
-            continue
-        sx_orig += [ni.x, nj.x, None]
-        sy_orig += [ni.y, nj.y, None]
-
-    fig.add_trace(go.Scatter(
-        x=sx_orig, y=sy_orig,
-        mode="lines",
-        line=dict(color="rgba(100,120,160,0.35)", width=1.0),
-        hoverinfo="skip",
-        showlegend=True,
-        name="Unverformt",
-    ))
-
-    # --- Verformte Struktur (rot) ---
-    sx_def, sy_def = [], []
-    for s in structure.springs:
-        if not s.active:
-            continue
-        ni = structure.nodes[s.node_i]
-        nj = structure.nodes[s.node_j]
-        if not ni.active or not nj.active:
-            continue
-
-        ux_i = float(u[2 * ni.id])
-        uy_i = float(u[2 * ni.id + 1])
-        ux_j = float(u[2 * nj.id])
-        uy_j = float(u[2 * nj.id + 1])
-
-        if clip is not None:
-            ux_i = float(np.clip(ux_i, -clip, clip))
-            uy_i = float(np.clip(uy_i, -clip, clip))
-            ux_j = float(np.clip(ux_j, -clip, clip))
-            uy_j = float(np.clip(uy_j, -clip, clip))
-
-        sx_def += [ni.x + scale * ux_i, nj.x + scale * ux_j, None]
-        sy_def += [ni.y + scale * uy_i, nj.y + scale * uy_j, None]
-
-    fig.add_trace(go.Scatter(
-        x=sx_def, y=sy_def,
-        mode="lines",
-        line=dict(color="#FF4444", width=2),
-        hoverinfo="skip",
-        showlegend=True,
-        name="Verformt",
-    ))
-
-    fig.update_layout(
-        paper_bgcolor="#1A1A2E",
-        plot_bgcolor="#16213E",
-        margin=dict(l=10, r=10, t=30, b=10),
-        legend=dict(
-            font=dict(color="white"),
-            bgcolor="rgba(0,0,0,0)",
-            orientation="h",
-            x=0.01, y=0.99,
-        ),
-        xaxis=dict(
-            showgrid=False, zeroline=False, showticklabels=False,
-            scaleanchor="y", scaleratio=1,
-        ),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        height=450,
-    )
-
-    return fig
-
-
-def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> go.Figure:
-    fig = go.Figure()
-    all_removed = removed_so_far | just_removed
-
-    # --- Bereits entfernte Federn (sehr blass) ---
-    sx_gone, sy_gone = [], []
-    for s in structure.springs:
-        ni = structure.nodes[s.node_i]
-        nj = structure.nodes[s.node_j]
-        if ni.id in removed_so_far or nj.id in removed_so_far:
-            sx_gone += [ni.x, nj.x, None]
-            sy_gone += [ni.y, nj.y, None]
-
-    fig.add_trace(go.Scatter(
-        x=sx_gone, y=sy_gone,
-        mode="lines",
-        line=dict(color="rgba(80,80,100,0.15)", width=0.8),
-        hoverinfo="skip", showlegend=False,
-    ))
-
-    # --- Aktive Federn ---
-    sx_act, sy_act = [], []
-    for s in structure.springs:
-        ni = structure.nodes[s.node_i]
-        nj = structure.nodes[s.node_j]
-        if ni.id not in all_removed and nj.id not in all_removed:
-            sx_act += [ni.x, nj.x, None]
-            sy_act += [ni.y, nj.y, None]
-
-    fig.add_trace(go.Scatter(
-        x=sx_act, y=sy_act,
-        mode="lines",
-        line=dict(color="#4A90D9", width=1.5),
-        hoverinfo="skip", showlegend=False,
-    ))
-
-    # --- Gerade entfernte Federn (orange) ---
-    sx_rem, sy_rem = [], []
-    for s in structure.springs:
-        ni = structure.nodes[s.node_i]
-        nj = structure.nodes[s.node_j]
-        if ni.id not in removed_so_far and nj.id not in removed_so_far:
-            if ni.id in just_removed or nj.id in just_removed:
-                sx_rem += [ni.x, nj.x, None]
-                sy_rem += [ni.y, nj.y, None]
-
-    fig.add_trace(go.Scatter(
-        x=sx_rem, y=sy_rem,
-        mode="lines",
-        line=dict(color="#FF8C00", width=2),
-        hoverinfo="skip", showlegend=False,
-    ))
-
-    # --- Gerade entfernte Knoten (orange X) ---
-    rem_nodes = [structure.nodes[nid] for nid in just_removed]
-    if rem_nodes:
-        fig.add_trace(go.Scatter(
-            x=[n.x for n in rem_nodes],
-            y=[n.y for n in rem_nodes],
-            mode="markers",
-            marker=dict(color="#FF8C00", size=9, symbol="x", line=dict(width=2, color="#FF8C00")),
-            hovertext=[f"Knoten {n.id}" for n in rem_nodes],
-            hoverinfo="text", showlegend=False,
-        ))
-
-    fig.update_layout(
-        paper_bgcolor="#1A1A2E",
-        plot_bgcolor="#16213E",
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                   scaleanchor="y", scaleratio=1),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        height=450,
-    )
-    return fig
-
-
-def generate_replay_gif(
-    structure,
-    hist,
-    fps: int = 5,
-    width: int = 800,
-    height: int = 450,
-    on_progress=None,
-) -> bytes:
-    n_steps = len(hist.removed_nodes_per_iter)
-    total_frames = n_steps + 1  # +1 for initial frame
-
-    all_x = [n.x for n in structure.nodes]
-    all_y = [n.y for n in structure.nodes]
-    pad_x = (max(all_x) - min(all_x)) * 0.08
-    pad_y = (max(all_y) - min(all_y)) * 0.08
-    x_range = [min(all_x) - pad_x, max(all_x) + pad_x]
-    y_range = [min(all_y) - pad_y, max(all_y) + pad_y]
-
-    layout_update = dict(
-        xaxis=dict(range=x_range, showgrid=False, zeroline=False, showticklabels=False, scaleanchor="y", scaleratio=1),
-        yaxis=dict(range=y_range, showgrid=False, zeroline=False, showticklabels=False),
-    )
-
-    frames: list[Image.Image] = []
-    removed_so_far: set = set()
-
-    fig = plot_replay_structure(structure, set(), set())
-    fig.update_layout(**layout_update)
-    frames.append(Image.open(io.BytesIO(fig.to_image(format="png", width=width, height=height))).convert("RGB").quantize(colors=256))
-    if on_progress:
-        on_progress(1 / total_frames)
-
-    for s in range(n_steps):
-        just_removed = set(hist.removed_nodes_per_iter[s])
-        fig = plot_replay_structure(structure, removed_so_far, just_removed)
-        fig.update_layout(**layout_update)
-        frames.append(Image.open(io.BytesIO(fig.to_image(format="png", width=width, height=height))).convert("RGB").quantize(colors=256))
-        removed_so_far = removed_so_far | just_removed
-        if on_progress:
-            on_progress((s + 2) / total_frames)
-
-    # Letzten Frame 3 Sekunden einfrieren
-    frames.extend([frames[-1]] * max(1, fps * 3))
-
-    gif_buf = io.BytesIO()
-    frames[0].save(
-        gif_buf,
-        format="GIF",
-        save_all=True,
-        append_images=frames[1:],
-        duration=1000 // fps,
-        loop=0,
-    )
-    return gif_buf.getvalue()
 
 
 # --- UI ---
@@ -326,10 +120,7 @@ if st.session_state.history is not None:
         st.info("Lastpfade-Visualisierung folgt in einem späteren Schritt.")
 
     elif view == "Verformung":
-        K = st.session_state.structure.assemble_K()
-        F = st.session_state.structure.assemble_F()
-        fixed = st.session_state.structure.fixed_dofs()
-        u = solve(K, F, fixed)
+        u = compute_displacement(st.session_state.structure)
 
         # Robuste Referenz: 95. Perzentil der nicht-null Verschiebungen
         u_abs = np.abs(u)
@@ -340,9 +131,9 @@ if st.session_state.history is not None:
         nodes_active = [n for n in st.session_state.structure.nodes if n.active]
         x_vals = [n.x for n in nodes_active]
         y_vals = [n.y for n in nodes_active]
-        width      = max(x_vals) - min(x_vals) if x_vals else 1.0
-        height_val = max(y_vals) - min(y_vals) if y_vals else 1.0
-        auto_scale = 0.15 * max(width, height_val) / u_ref if u_ref > 0 else 1.0
+        struct_width  = max(x_vals) - min(x_vals) if x_vals else 1.0
+        struct_height = max(y_vals) - min(y_vals) if y_vals else 1.0
+        auto_scale = 0.15 * max(struct_width, struct_height) / u_ref if u_ref > 0 else 1.0
 
         scale = st.slider(
             "Skalierungsfaktor Verformung",
@@ -378,7 +169,7 @@ if st.session_state.history is not None:
             just_removed: set = set(hist.removed_nodes_per_iter[step - 1]) if step > 0 else set()
 
             fig = plot_replay_structure(st.session_state.structure, removed_so_far, just_removed)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             st.divider()
             fps = st.select_slider("FPS", options=[2, 5, 10, 15], value=5)
@@ -386,7 +177,9 @@ if st.session_state.history is not None:
                 progress = st.progress(0.0, text="Frames werden gerendert...")
                 gif_bytes = generate_replay_gif(
                     st.session_state.structure, hist, fps=fps,
-                    on_progress=lambda p: progress.progress(p, text=f"Frames werden gerendert... {p:.0%}"),
+                    on_progress=lambda p: progress.progress(
+                        p, text=f"Frames werden gerendert... {p:.0%}"
+                    ),
                 )
                 st.session_state.gif_bytes = gif_bytes
                 progress.empty()

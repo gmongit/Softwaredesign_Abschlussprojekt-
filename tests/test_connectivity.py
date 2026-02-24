@@ -1,14 +1,9 @@
 from core.model.node import Node
 from core.model.spring import Spring
 from core.model.structure import Structure
-from core.optimization.connectivity_check import (
-    is_structure_connected,
-    do_loads_reach_supports,
-    is_valid_topology,
-)
 
 
-def test_connected_structure_is_true():
+def test_valid_topology_is_true():
     nodes = [
         Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
         Node(1, 1.0, 0.0),
@@ -20,12 +15,10 @@ def test_connected_structure_is_true():
     ]
     s = Structure(nodes, springs)
 
-    assert is_structure_connected(s) is True
-    assert do_loads_reach_supports(s) is True
-    assert is_valid_topology(s) is True
+    assert s.is_valid_topology() is True
 
 
-def test_disconnected_structure_is_false():
+def test_invalid_topology_disconnected():
     nodes = [
         Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
         Node(1, 1.0, 0.0),
@@ -33,16 +26,15 @@ def test_disconnected_structure_is_false():
         Node(3, 11.0, 0.0),
     ]
     springs = [
-        Spring(0, 1, 100.0),  # Komponente A
-        Spring(2, 3, 100.0),  # Komponente B
+        Spring(0, 1, 100.0),
+        Spring(2, 3, 100.0),
     ]
     s = Structure(nodes, springs)
 
-    assert is_structure_connected(s) is False
-    assert is_valid_topology(s) is False
+    assert s.is_valid_topology() is False
 
 
-def test_load_not_reaching_support_is_false():
+def test_invalid_topology_load_not_reaching_support():
     nodes = [
         Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
         Node(1, 1.0, 0.0),
@@ -50,16 +42,13 @@ def test_load_not_reaching_support_is_false():
     ]
     springs = [
         Spring(0, 1, 100.0),
-        # Node 2 hat Last, ist aber isoliert -> darf nicht
     ]
     s = Structure(nodes, springs)
 
-    assert is_structure_connected(s) is False
-    assert do_loads_reach_supports(s) is False
-    assert is_valid_topology(s) is False
+    assert s.is_valid_topology() is False
 
 
-def test_exclude_nodes_allows_checking_candidate_removal():
+def test_invalid_topology_exclude_bridge_node():
     nodes = [
         Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
         Node(1, 1.0, 0.0),
@@ -71,5 +60,86 @@ def test_exclude_nodes_allows_checking_candidate_removal():
     ]
     s = Structure(nodes, springs)
 
-    # Wenn man Node 1 entfernt, werden 0 und 2 getrennt -> ungültig
-    assert is_valid_topology(s, exclude_nodes={1}) is False
+    assert s.is_valid_topology(exclude_nodes={1}) is False
+
+
+def test_remove_removable_isolated_island():
+    nodes = [
+        Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
+        Node(1, 1.0, 0.0, fx=10.0),
+        Node(2, 5.0, 0.0),
+        Node(3, 6.0, 0.0),
+    ]
+    springs = [
+        Spring(0, 1, 100.0),
+        Spring(2, 3, 100.0),
+    ]
+    s = Structure(nodes, springs)
+
+    count = s.remove_removable_nodes()
+    assert count == 2
+    assert s.nodes[2].active is False
+    assert s.nodes[3].active is False
+    assert s.nodes[0].active is True
+    assert s.nodes[1].active is True
+
+
+def test_remove_removable_dead_end_chain():
+    nodes = [
+        Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
+        Node(1, 1.0, 0.0),
+        Node(2, 2.0, 0.0),
+        Node(3, 3.0, 0.0, fx=10.0),
+        Node(4, 4.0, 0.0),
+        Node(5, 5.0, 0.0),
+    ]
+    springs = [
+        Spring(0, 1, 100.0),
+        Spring(1, 2, 100.0),
+        Spring(2, 3, 100.0),
+        Spring(3, 4, 100.0),
+        Spring(4, 5, 100.0),
+    ]
+    s = Structure(nodes, springs)
+
+    count = s.remove_removable_nodes()
+    assert count == 2
+    assert s.nodes[4].active is False
+    assert s.nodes[5].active is False
+    assert s.nodes[0].active is True
+    assert s.nodes[3].active is True
+
+
+def test_remove_removable_protected_nodes_never_removed():
+    nodes = [
+        Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
+        Node(1, 1.0, 0.0, fx=10.0),
+    ]
+    springs = [
+        Spring(0, 1, 100.0),
+    ]
+    s = Structure(nodes, springs)
+
+    count = s.remove_removable_nodes()
+    assert count == 0
+    assert s.nodes[0].active is True
+    assert s.nodes[1].active is True
+
+
+def test_remove_removable_component_without_support():
+    nodes = [
+        Node(0, 0.0, 0.0, fix_x=True, fix_y=True),
+        Node(1, 1.0, 0.0, fx=5.0),
+        Node(2, 5.0, 0.0, fx=10.0),
+        Node(3, 6.0, 0.0),
+    ]
+    springs = [
+        Spring(0, 1, 100.0),
+        Spring(2, 3, 100.0),
+    ]
+    s = Structure(nodes, springs)
+
+    count = s.remove_removable_nodes()
+    assert count == 2
+    assert s.nodes[2].active is False
+    assert s.nodes[3].active is False

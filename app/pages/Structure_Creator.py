@@ -9,6 +9,10 @@ from app.service.structure_service import (
     create_rectangular_grid,
     create_structure_from_image,
     image_to_binary_grid,
+    set_festlager,
+    set_loslager,
+    set_last,
+    toggle_node,
 )
 from app.plots import plot_structure
 
@@ -42,12 +46,11 @@ if view == "Manuell":
     if st.button("✅ Struktur erstellen", type="primary"):
         _nx, _ny = int(nx), int(ny)
         s = create_rectangular_grid(float(width), float(height), _nx, _ny)
-        # Standard: Festlager links unten, Loslager rechts unten, Kraft Mitte oben
-        s.nodes[0].fix_x = True                          
-        s.nodes[0].fix_y = True
-        s.nodes[_nx - 1].fix_y = True                    
+        # Standard-BCs: Festlager links unten, Loslager rechts unten, Kraft Mitte oben
+        set_festlager(s, 0)
+        set_loslager(s, _nx - 1)
         mid_col = _nx // 2
-        s.nodes[(_ny - 1) * _nx + mid_col].fy = float(load_fy)  
+        set_last(s, (_ny - 1) * _nx + mid_col, float(load_fy))
 
         st.session_state.structure = copy.deepcopy(s)
         st.session_state.original_structure = s
@@ -127,7 +130,7 @@ elif view == "Bild hochladen":
             st.caption(f"Erkannt: {int(grid.sum())} / {int(img_nx) * int(img_ny)} Knoten aktiv")
             st.image(preview_img, width='stretch')
 
-        # Struktur erstellen 
+        # Struktur erstellen
         if st.button("✅ Struktur aus Bild erstellen", type="primary"):
             img_data.seek(0)
             s = create_structure_from_image(
@@ -190,25 +193,11 @@ if orig is not None:
 
             node = orig.nodes[node_id]
             struct = st.session_state.get("structure")
-            node2 = struct.nodes[node_id] if struct else None
 
             if bc_mode == "Knoten an/aus":
-                new_active = not node.active
-                node.active = new_active
-                if node2:
-                    node2.active = new_active
-                # Federn an/aus die diesen Knoten betreffen
-                for s in orig.springs:
-                    if s.node_i == node_id or s.node_j == node_id:
-                        ni_active = orig.nodes[s.node_i].active
-                        nj_active = orig.nodes[s.node_j].active
-                        s.active = ni_active and nj_active
+                toggle_node(orig, node_id)
                 if struct:
-                    for s in struct.springs:
-                        if s.node_i == node_id or s.node_j == node_id:
-                            ni_active = struct.nodes[s.node_i].active
-                            nj_active = struct.nodes[s.node_j].active
-                            s.active = ni_active and nj_active
+                    toggle_node(struct, node_id)
                 st.rerun()
 
             # Für BC-Modi nur aktive Knoten
@@ -216,40 +205,19 @@ if orig is not None:
                 continue
 
             if bc_mode == "Festlager":
-                toggle = node.fix_x and node.fix_y
-                node.fix_x = not toggle
-                node.fix_y = not toggle
-                node.fx = 0.0
-                node.fy = 0.0
-                if node2:
-                    node2.fix_x = node.fix_x
-                    node2.fix_y = node.fix_y
-                    node2.fx = 0.0
-                    node2.fy = 0.0
+                set_festlager(orig, node_id)
+                if struct:
+                    set_festlager(struct, node_id)
 
             elif bc_mode == "Loslager":
-                toggle = node.fix_y and not node.fix_x
-                node.fix_y = not toggle
-                node.fix_x = False
-                node.fx = 0.0
-                node.fy = 0.0
-                if node2:
-                    node2.fix_y = node.fix_y
-                    node2.fix_x = False
-                    node2.fx = 0.0
-                    node2.fy = 0.0
+                set_loslager(orig, node_id)
+                if struct:
+                    set_loslager(struct, node_id)
 
             elif bc_mode == "Last setzen":
-                if abs(node.fy) > 0:
-                    node.fy = 0.0
-                else:
-                    node.fy = float(bc_force)
-                node.fix_x = False
-                node.fix_y = False
-                if node2:
-                    node2.fy = node.fy
-                    node2.fix_x = False
-                    node2.fix_y = False
+                set_last(orig, node_id, bc_force)
+                if struct:
+                    set_last(struct, node_id, bc_force)
 
             st.rerun()
 
@@ -259,8 +227,15 @@ if orig is not None:
     has_fix_x = any(n.fix_x for n in supports)
     has_fix_y = any(n.fix_y for n in supports)
 
+    removable_count = len(orig._find_removable_nodes())
+
     if supports and loads and has_fix_x and has_fix_y:
-        st.caption(f"✅ {len(supports)} Lager, {len(loads)} Lastknoten — bereit")
+        status = f"✅ {len(supports)} Lager, {len(loads)} Lastknoten"
+        if removable_count > 0:
+            status += f", {removable_count} entfernbare Knoten"
+        else:
+            status += " — bereit"
+        st.caption(status)
     else:
         missing = []
         if not has_fix_y:
@@ -269,7 +244,31 @@ if orig is not None:
             missing.append("Lager (fix_x)")
         if not loads:
             missing.append("Lastknoten")
-        st.caption(f"⚠️ Fehlend: {', '.join(missing)}")
+        info = f"⚠️ Fehlend: {', '.join(missing)}"
+        if removable_count > 0:
+            info += f" | {removable_count} entfernbare Knoten"
+        st.caption(info)
+
+    # Struktur-Tools
+    col_check, col_remove = st.columns(2)
+    with col_check:
+        if st.button("🔍 Struktur prüfen", width='stretch'):
+            if not orig.is_valid_topology():
+                st.error("Struktur ist nicht zusammenhängend oder Lastpfad unterbrochen.")
+            elif not supports or not loads or not has_fix_x or not has_fix_y:
+                st.warning("Topologie ok, aber Randbedingungen unvollständig.")
+            else:
+                st.success("Struktur ist gültig und bereit für die Optimierung.")
+    with col_remove:
+        if st.button("🧹 Bereinigen", width='stretch'):
+            struct = st.session_state.get("structure")
+            removed_orig = orig.remove_removable_nodes()
+            removed_struct = struct.remove_removable_nodes() if struct else 0
+            if removed_orig > 0:
+                st.success(f"{removed_orig} entfernbare Knoten bereinigt.")
+                st.rerun()
+            else:
+                st.info("Keine Inseln oder Sackgassen gefunden.")
 
     # PNG Export
     active_name = st.session_state.get("case_name_main") or "struktur"

@@ -1,6 +1,7 @@
 import numpy as np
 import streamlit as st
 from core.db.material_store import material_store
+from app.plots import plot_load_paths_with_arrows
 from app.service.optimization_service import (
     prepare_structure,
     run_optimization,
@@ -116,8 +117,26 @@ if st.session_state.history is not None:
         fig = plot_heatmap(st.session_state.structure, energies=energies)
         st.plotly_chart(fig, width='stretch')
 
+
     elif view == "Lastpfade":
-        st.info("Lastpfade-Visualisierung folgt in einem späteren Schritt.")
+        u = compute_displacement(st.session_state.structure)
+
+        # das gleiche Array wie für die Heatmap (bei euch heißt es evtl. energies)
+        energies = compute_forces(st.session_state.structure)
+
+        arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
+        show_top = st.slider("Top-Stäbe anzeigen", 10, 500, 80, 10)
+
+        fig = plot_load_paths_with_arrows(
+            st.session_state.structure,
+            u=u,
+            energies=energies,
+            arrow_scale=arrow_scale,
+            top_n=show_top,
+        )
+        st.plotly_chart(fig, width="stretch")
+
+
 
     elif view == "Verformung":
         u = compute_displacement(st.session_state.structure)

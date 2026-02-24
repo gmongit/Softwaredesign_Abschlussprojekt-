@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from PIL import Image
 
+from core.model import structure
 from core.model.structure import Structure
 
 
@@ -376,3 +377,117 @@ def generate_replay_gif(
         loop=0,
     )
     return gif_buf.getvalue()
+
+def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=80):
+    """
+    Lastpfade als Pfeile entlang der Stäbe.
+    Pfeillänge ~ energies[i] (gleiches Mapping wie Heatmap: Feder i -> energies[i]).
+    Richtung entlang Stab; Zug/Druck-Vorzeichen wird aus u über dL bestimmt.
+    """
+
+    segs = []  
+
+    for i, s in enumerate(structure.springs):
+        if not getattr(s, "active", True):
+            continue
+
+        n1 = structure.nodes[s.node_i]
+        n2 = structure.nodes[s.node_j]
+        if not n1.active or not n2.active:
+            continue
+
+        x1, y1 = n1.x, n1.y
+        x2, y2 = n2.x, n2.y
+
+        r0 = np.array([x2 - x1, y2 - y1], dtype=float)
+        L0 = np.linalg.norm(r0)
+        if L0 == 0:
+            continue
+        e = r0 / L0
+
+        # (Vorzeichen)
+        u1 = np.array([u[2*n1.id], u[2*n1.id + 1]], dtype=float)
+        u2 = np.array([u[2*n2.id], u[2*n2.id + 1]], dtype=float)
+        dL = float(np.dot((u2 - u1), e))
+        sign = 1.0 if dL >= 0 else -1.0
+
+        # energies[i]
+        mag = float(abs(energies[i]))
+        F = sign * mag
+
+        segs.append((x1, y1, x2, y2, F, mag))
+
+    if len(segs) == 0:
+        fig = go.Figure()
+        fig.update_layout(title="Keine aktiven Stäbe / Lastpfade nicht berechenbar")
+        return fig
+
+    mags = np.array([m for *_, m in segs], dtype=float)
+
+    order = np.argsort(mags)[::-1]  # stärkste zuerst
+    if top_n is not None:
+        order = order[: min(top_n, len(order))]
+
+    Fmax = float(np.max(mags)) if np.max(mags) > 0 else 1.0
+
+    # 
+    fig = go.Figure()
+    x_all, y_all = [], []
+    for (x1, y1, x2, y2, _, _) in segs:
+        x_all += [x1, x2, None]
+        y_all += [y1, y2, None]
+
+    fig.add_trace(go.Scatter(
+        x=x_all, y=y_all,
+        mode="lines",
+        line=dict(width=2),
+        hoverinfo="skip",
+        opacity=0.5
+    ))
+
+    #  Pfeile 
+    nodes_active = [n for n in structure.nodes if n.active]
+    xs = [n.x for n in nodes_active]
+    ys = [n.y for n in nodes_active]
+    bbox = max(max(xs) - min(xs), max(ys) - min(ys), 1e-6)
+    base_len = 0.08 * bbox * arrow_scale
+
+    annotations = []
+
+    for idx in order:
+        x1, y1, x2, y2, F, mag = segs[idx]
+
+        r0 = np.array([x2 - x1, y2 - y1], dtype=float)
+        L0 = np.linalg.norm(r0)
+        if L0 == 0:
+            continue
+        e = r0 / L0
+
+        xm = 0.5 * (x1 + x2)
+        ym = 0.5 * (y1 + y2)
+
+        strength = mag / Fmax
+        direction = 1.0 if F >= 0 else -1.0
+
+        dx = direction * e[0] * base_len * strength
+        dy = direction * e[1] * base_len * strength
+
+        annotations.append(dict(
+            x=xm + dx, y=ym + dy,
+            ax=xm, ay=ym,
+            xref="x", yref="y", axref="x", ayref="y",
+            showarrow=True,
+            arrowhead=3,
+            arrowsize=1,
+            arrowwidth=2,
+            opacity=0.9,
+        ))
+
+    fig.update_layout(
+        title="Lastpfade neue version",
+        showlegend=False,
+        annotations=annotations,
+        xaxis=dict(scaleanchor="y", scaleratio=1),
+    )
+
+    return fig

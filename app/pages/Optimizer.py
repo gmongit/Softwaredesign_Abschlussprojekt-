@@ -3,8 +3,7 @@ import streamlit as st
 from core.db.material_store import material_store
 from app.plots import plot_load_paths_with_arrows
 from app.service.optimization_service import (
-    prepare_structure,
-    run_optimization,
+    optimize_structure,
     compute_displacement,
     compute_forces,
 )
@@ -15,26 +14,6 @@ from app.plots import (
     plot_replay_structure,
     generate_replay_gif,
 )
-
-
-# UNUSED — Logik ist in plot_deformed_structure integriert
-def compute_deformed_positions(structure, u: np.ndarray, scale: float = 1.0):
-    deformed = {}
-
-    for node in structure.nodes:
-        if not node.active:
-            continue
-
-        i = node.id
-        ux = u[2 * i]
-        uy = u[2 * i + 1]
-
-        x_def = node.x + scale * ux
-        y_def = node.y + scale * uy
-
-        deformed[i] = (x_def, y_def)
-
-    return deformed
 
 
 # --- UI ---
@@ -63,36 +42,31 @@ with st.sidebar:
 
     factor_of_safety = st.slider("Sicherheitsfaktor", 1.0, 10.0, 1.4, 0.1)
     st.markdown("<br>", unsafe_allow_html=True)
-    has_nx = st.session_state.nx is not None
-    use_symmetry = st.toggle("Symmetrie erzwingen", value=has_nx, disabled=not has_nx)
-    if not has_nx:
-        st.caption("Symmetrie nur bei bekanntem Raster (nx) verfügbar.")
     target_mass     = st.slider("Ziel-Massenanteil", 0.1, 1.0, 0.4, 0.01)
     remove_fraction = st.slider("Entfernungsrate / Iteration", 0.01, 0.2, 0.05, 0.01)
     max_iters       = st.number_input("Max. Iterationen", 10, 500, 120, 10)
 
     if st.button("▶ Optimierung starten", type="primary"):
         try:
-            prepare_structure(st.session_state.structure, selected_material if mat else None, beam_area_mm2)
-        except ValueError as e:
-            st.error(str(e))
-        else:
-            try:
-                hist = run_optimization(
+            hist = optimize_structure(
                 st.session_state.structure,
+                material_name=selected_material if mat else None,
+                beam_area_mm2=beam_area_mm2,
                 remove_fraction=float(remove_fraction),
                 target_mass_fraction=float(target_mass),
-                max_iters=int(max_iters),
-                enforce_symmetry=use_symmetry,
-                nx=st.session_state.nx if use_symmetry else None,
-                )
-            except ValueError as e:
-                st.error(str(e))
-            else:
-                st.session_state.history = hist
-                st.session_state.gif_bytes = None
-                mode = "symmetrisch" if use_symmetry else "normal"
-                st.success(f"✅ Fertig ({mode})! Masse: {st.session_state.structure.current_mass_fraction():.1%}")
+                max_iters=int(max_iters)
+            )
+            st.session_state.history = hist
+            st.session_state.gif_bytes = None
+            
+            # Für die Erfolgsmeldung kurz prüfen, ob Symmetrie genutzt wurde
+            is_sym, _ = st.session_state.structure.detect_symmetry()
+            mode = "symmetrisch" if is_sym else "normal"
+            mf = st.session_state.structure.current_mass_fraction()
+            st.success(f"Fertig ({mode})! Masse: {mf:.1%}")
+            
+        except ValueError as e:
+            st.error(str(e))
 
 # --- Visualisierung ---
 if st.session_state.history is not None:
@@ -140,6 +114,9 @@ if st.session_state.history is not None:
 
     elif view == "Verformung":
         u = compute_displacement(st.session_state.structure)
+        if u is None:
+            st.warning("Verschiebung nicht berechenbar (singuläre Matrix).")
+            st.stop()
 
         # Robuste Referenz: 95. Perzentil der nicht-null Verschiebungen
         u_abs = np.abs(u)
@@ -226,10 +203,12 @@ if st.session_state.history is not None:
 
     # --- Metriken ---
     structure = st.session_state.structure
-    c1, c2, c3 = st.columns(3)
+    is_sym, _ = structure.detect_symmetry()
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Aktive Knoten", structure.active_node_count())
     c2.metric("Gesamt Knoten", structure.total_node_count())
     c3.metric("Massenanteil", f"{structure.current_mass_fraction():.1%}")
+    c4.metric("Symmetrie", "Symmetrisch" if is_sym else "Asymmetrisch")
 
     # --- Optimierungsverlauf ---
     hist = st.session_state.history

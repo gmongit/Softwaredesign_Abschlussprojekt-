@@ -31,6 +31,8 @@ def _history_to_dict(history):
     return {
         "mass_fraction": list(history.mass_fraction),
         "removed_per_iter": list(history.removed_per_iter),
+        "removed_springs_per_iter": [list(x) for x in getattr(history, "removed_springs_per_iter", [])],
+        "removed_nodes_per_iter": [list(x) for x in getattr(history, "removed_nodes_per_iter", [])],
         "active_nodes": list(history.active_nodes),
         "max_displacement": list(history.max_displacement),
     }
@@ -49,6 +51,8 @@ def _history_from_dict(data):
     return OptimizationHistory(
         mass_fraction=list(data.get("mass_fraction", [])),
         removed_per_iter=list(data.get("removed_per_iter", [])),
+        removed_springs_per_iter=[list(x) for x in data.get("removed_springs_per_iter", [])],
+        removed_nodes_per_iter=[list(x) for x in data.get("removed_nodes_per_iter", [])],
         active_nodes=list(data.get("active_nodes", [])),
         max_displacement=list(data.get("max_displacement", [])),
     )

@@ -13,6 +13,7 @@ from app.service.structure_service import (
     set_loslager,
     set_last,
     toggle_node,
+    apply_default_boundary_conditions,
 )
 from app.plots import plot_structure
 
@@ -47,10 +48,7 @@ if view == "Manuell":
         _nx, _ny = int(nx), int(ny)
         s = create_rectangular_grid(float(width), float(height), _nx, _ny)
         # Standard-BCs: Festlager links unten, Loslager rechts unten, Kraft Mitte oben
-        set_festlager(s, 0)
-        set_loslager(s, _nx - 1)
-        mid_col = _nx // 2
-        set_last(s, (_ny - 1) * _nx + mid_col, float(load_fy))
+        apply_default_boundary_conditions(s, _nx, _ny, float(load_fy))
 
         st.session_state.structure = copy.deepcopy(s)
         st.session_state.original_structure = s
@@ -192,33 +190,29 @@ if orig is not None:
             node_id = int(node_id)
 
             node = orig.nodes[node_id]
-            struct = st.session_state.get("structure")
+            
+            # Änderung am Original vornehmen
+            changed = False
 
             if bc_mode == "Knoten an/aus":
-                toggle_node(orig, node_id)
-                if struct:
-                    toggle_node(struct, node_id)
-                st.rerun()
+                changed = True
+                toggle_node(orig, node_id) # Rückgabewert hier ignoriert, da wir eh resetten
 
             # Für BC-Modi nur aktive Knoten
-            if not node.active:
-                continue
+            elif not node.active:
+                pass # Nichts tun
 
-            if bc_mode == "Festlager":
-                set_festlager(orig, node_id)
-                if struct:
-                    set_festlager(struct, node_id)
-
+            elif bc_mode == "Festlager":
+                changed = set_festlager(orig, node_id)
             elif bc_mode == "Loslager":
-                set_loslager(orig, node_id)
-                if struct:
-                    set_loslager(struct, node_id)
-
+                changed = set_loslager(orig, node_id)
             elif bc_mode == "Last setzen":
-                set_last(orig, node_id, bc_force)
-                if struct:
-                    set_last(struct, node_id, bc_force)
+                changed = set_last(orig, node_id, bc_force)
 
+            # Wenn sich etwas geändert hat: Arbeitskopie resetten!
+            if changed:
+                st.session_state.structure = copy.deepcopy(orig)
+                st.session_state.history = None
             st.rerun()
 
     # Validierung
@@ -250,18 +244,32 @@ if orig is not None:
         st.caption(info)
 
     # Struktur-Tools
-    col_check, col_remove = st.columns(2)
+    col_check, col_sym, col_remove = st.columns(3)
     with col_check:
         if st.button("🔍 Struktur prüfen", width='stretch'):
+            orig._register_special_nodes()
             if not orig.is_valid_topology():
                 st.error("Struktur ist nicht zusammenhängend oder Lastpfad unterbrochen.")
             elif not supports or not loads or not has_fix_x or not has_fix_y:
                 st.warning("Topologie ok, aber Randbedingungen unvollständig.")
             else:
                 st.success("Struktur ist gültig und bereit für die Optimierung.")
+    with col_sym:
+        if st.button("🔄 Symmetrie prüfen", width='stretch'):
+            is_sym, _ = orig.detect_symmetry()
+            if is_sym:
+                st.success("Struktur ist symmetrisch.")
+            else:
+                st.warning("Struktur ist nicht symmetrisch.")
     with col_remove:
         if st.button("🧹 Bereinigen", width='stretch'):
             struct = st.session_state.get("structure")
+            orig._register_special_nodes() 
+            removed_orig = orig.remove_removable_nodes()
+    
+            if struct:
+                struct._register_special_nodes() 
+                removed_struct = struct.remove_removable_nodes()
             removed_orig = orig.remove_removable_nodes()
             removed_struct = struct.remove_removable_nodes() if struct else 0
             if removed_orig > 0:

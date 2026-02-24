@@ -378,6 +378,7 @@ def generate_replay_gif(
     )
     return gif_buf.getvalue()
 
+
 def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=80):
     """
     Lastpfade als Pfeile entlang der Stäbe.
@@ -385,7 +386,7 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
     Richtung entlang Stab; Zug/Druck-Vorzeichen wird aus u über dL bestimmt.
     """
 
-    segs = []  
+    segs = []
 
     for i, s in enumerate(structure.springs):
         if not getattr(s, "active", True):
@@ -430,7 +431,6 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
 
     Fmax = float(np.max(mags)) if np.max(mags) > 0 else 1.0
 
-    # 
     fig = go.Figure()
     x_all, y_all = [], []
     for (x1, y1, x2, y2, _, _) in segs:
@@ -445,7 +445,7 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
         opacity=0.5
     ))
 
-    #  Pfeile 
+    #  Pfeile
     nodes_active = [n for n in structure.nodes if n.active]
     xs = [n.x for n in nodes_active]
     ys = [n.y for n in nodes_active]
@@ -484,7 +484,6 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
         ))
 
     fig.update_layout(
-        title="Lastpfade neue version",
         showlegend=False,
         annotations=annotations,
         xaxis=dict(scaleanchor="y", scaleratio=1),

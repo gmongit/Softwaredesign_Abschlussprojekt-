@@ -17,6 +17,11 @@ class Structure:
         self.beam_area: float = 0.0
         self._initial_mass: float = 0.0
 
+        self.support_ids: set[int] = set()
+        self.load_ids: set[int] = set()
+        self.protected_base: set[int] = set()
+
+
     @property
     def ndof(self) -> int:
         return 2 * len(self.nodes)
@@ -41,65 +46,72 @@ class Structure:
                 G.add_edge(ni.id, nj.id)
 
         return G
+    
+    def _register_special_nodes(self) -> None:
+        """Sucht Lager und Lastknoten und Speichert diese"""
+        self.support_ids = {n.id for n in self.nodes if n.fix_x or n.fix_y}
+        self.load_ids = {n.id for n in self.nodes if abs(n.fx) > 1e-9 or abs(n.fy) > 1e-9}
+        self.protected_base = self.support_ids | self.load_ids
 
     def is_valid_topology(self, exclude_nodes: set[int] | None = None) -> bool:
-        """Prüft Zusammenhang und Lastpfade (Last → Lager)."""
-        G = self.build_graph(exclude_nodes)
+        """Prüft Zusammenhang und Lastpfade (Last -> Lager)."""
         exclude = exclude_nodes or set()
+        G = self.build_graph(exclude)
 
         if G.number_of_nodes() <= 1:
             return True
         if not nx.is_connected(G):
             return False
 
-        support_ids = {
-            n.id for n in self.nodes
-            if n.active and n.id not in exclude and (n.fix_x or n.fix_y)
-        }
-        load_ids = [
-            n.id for n in self.nodes
-            if n.active and n.id not in exclude and (abs(n.fx) > 0.0 or abs(n.fy) > 0.0)
-        ]
+        current_supports = self.support_ids - exclude
+        current_loads = [lid for lid in self.load_ids if lid not in exclude]
 
-        if len(load_ids) == 0:
+        if not current_loads:
             return True
-        if len(support_ids) == 0:
+        if not current_supports:
             return False
 
-        for lid in load_ids:
-            reachable = nx.node_connected_component(G, lid)
-            if reachable.isdisjoint(support_ids):
+        for lid in current_loads: 
+            if lid not in G:
                 return False
-
+            reachable = nx.node_connected_component(G, lid)
+            if reachable.isdisjoint(current_supports):
+                return False
+            
         return True
 
     def _find_removable_nodes(self) -> set[int]:
-        """Findet strukturell nutzlose Knoten: isolierte Inseln + Sackgassen."""
+        """Findet strukturell nutzlose Knoten: isolierte Inseln + tote Äste."""
         protected = self._protected_ids()
         removable: set[int] = set()
         G = self.build_graph()
 
-        # Isolierte Inseln: Komponenten ohne Lager oder ohne Last
+        # Isolierte Inseln keine Verbindung zu Lager & Last
         for comp in nx.connected_components(G):
-            has_support = any(self.nodes[nid].fix_x or self.nodes[nid].fix_y for nid in comp)
-            has_load = any(abs(self.nodes[nid].fx) > 0.0 or abs(self.nodes[nid].fy) > 0.0 for nid in comp)
+            has_support = not comp.isdisjoint(self.support_ids)
+            has_load = not comp.isdisjoint(self.load_ids)
             if not has_support or not has_load:
                 removable |= comp
 
-        # Sackgassen-Ketten: Grad-1-Knoten
-        work = G.copy()
+        # Wenn ein Teilgraph nur über einen Knoten erreichbar ist (Ohne Lager, Last)
         changed = True
         while changed:
             changed = False
-            dead_ends = [
-                nid for nid in work.nodes()
-                if work.degree(nid) <= 1 and nid not in protected and nid not in removable
-            ]
-            for nid in dead_ends:
-                removable.add(nid)
-                work.remove_node(nid)
-                changed = True
-
+            remaining = set(G.nodes()) - removable
+            if len(remaining) < 2:
+                break
+            
+            work = G.subgraph(remaining).copy()
+            for ap in list(nx.articulation_points(work)):
+                work_without = work.copy()
+                work_without.remove_node(ap)
+                
+                for fragment in nx.connected_components(work_without):
+                    if fragment.isdisjoint(protected):
+                        removable |= fragment
+                        if ap not in protected:
+                            removable.add(ap)
+                        changed = True
         return removable
 
     def remove_removable_nodes(self) -> int:
@@ -275,3 +287,61 @@ class Structure:
 
     def spring_forces(self, u: np.ndarray) -> np.ndarray:
         return self._per_spring_values(u, lambda s, ni, nj, u: s.axial_force(ni, nj, u))
+
+    def detect_symmetry(self, eps: float = 1e-6) -> tuple[bool, dict[int, int] | None]:
+        """Prüft vertikale Symmetrie. Gibt (is_symmetric, mirror_map) zurück."""
+        active = [n for n in self.nodes if n.active]
+        if len(active) < 2:
+            return False, None
+
+        # 1) Symmetrieachse aus Lagern
+        supports = [n for n in active if n.fix_x or n.fix_y]
+        if len(supports) < 2:
+            return False, None
+        x_center = (min(n.x for n in supports) + max(n.x for n in supports)) / 2
+
+        for s in supports:
+            mx = 2 * x_center - s.x
+            if not any(abs(n.x - mx) < eps and abs(n.y - s.y) < eps
+                       and (n.fix_x or n.fix_y) for n in supports):
+                return False, None
+
+        # 2) Lasten auf Achse oder symmetrisch paarweise
+        loaded = [n for n in active if abs(n.fx) > 0 or abs(n.fy) > 0]
+        for ln in loaded:
+            if abs(ln.fx) > eps:
+                return False, None
+            if abs(ln.x - x_center) > eps:
+                mx = 2 * x_center - ln.x
+                partner = [n for n in loaded
+                           if abs(n.x - mx) < eps and abs(n.y - ln.y) < eps]
+                if not partner or abs(partner[0].fy - ln.fy) > eps:
+                    return False, None
+
+        # 3) Mirror-Map für alle Knoten
+        mirror_map: dict[int, int] = {}
+        coord_to_id = {(round(n.x / eps) * eps, round(n.y / eps) * eps): n.id for n in active}
+
+        for n in active:
+            mx = 2 * x_center - n.x
+            key = (round(mx / eps) * eps, round(n.y / eps) * eps)
+            mid = coord_to_id.get(key)
+            if mid is None:
+                return False, None
+            mirror_map[n.id] = mid
+
+        # 4) Springs symmetrisch
+        edge_set = set()
+        for s in self.springs:
+            if not s.active:
+                continue
+            ni, nj = self.nodes[s.node_i], self.nodes[s.node_j]
+            if ni.active and nj.active:
+                edge_set.add((min(s.node_i, s.node_j), max(s.node_i, s.node_j)))
+
+        for a, b in list(edge_set):
+            ma, mb = mirror_map[a], mirror_map[b]
+            if (min(ma, mb), max(ma, mb)) not in edge_set:
+                return False, None
+
+        return True, mirror_map

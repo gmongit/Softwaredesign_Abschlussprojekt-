@@ -31,8 +31,7 @@ def run_optimization(
     remove_fraction: float,
     target_mass_fraction: float,
     max_iters: int,
-    enforce_symmetry: bool = True,
-    nx: int | None = None,
+    mirror_map: dict[int, int] | None = None,
 ):
     """Startet die Topologie-Optimierung und gibt die History zurück."""
 
@@ -41,10 +40,29 @@ def run_optimization(
         remove_fraction=remove_fraction,
         start_factor=0.3,
         ramp_iters=10,
-        enforce_symmetry=enforce_symmetry,
-        nx=nx,
+        mirror_map=mirror_map,
     )
     return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters)
+
+
+def optimize_structure(
+    structure: Structure,
+    material_name: str | None,
+    beam_area_mm2: float,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int
+):
+    """
+    Führt den gesamten Optimierungsprozess durch:
+    1. Vorbereitung (Material, Steifigkeiten)
+    2. Symmetrie-Erkennung
+    3. Optimierungsschleife
+    """
+    prepare_structure(structure, material_name, beam_area_mm2)
+    _, mirror_map = structure.detect_symmetry()
+    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters, mirror_map)
+
 
 def _validate_boundary_conditions(structure: Structure):
     nodes = [n for n in structure.nodes if n.active]
@@ -70,11 +88,6 @@ def compute_displacement(structure: Structure) -> np.ndarray | None:
     F = structure.assemble_F()
     fixed = structure.fixed_dofs()
     return solve(K, F, fixed)
-
-
-# UNUSED — ersetzt durch compute_displacement
-def _solve_u(structure: Structure) -> np.ndarray | None:
-    return compute_displacement(structure)
 
 
 def compute_energies(structure: Structure) -> np.ndarray | None:

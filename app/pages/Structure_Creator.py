@@ -234,8 +234,13 @@ if orig is not None:
                 st.warning("Struktur ist nicht symmetrisch.")
     with col_remove:
         if st.button("🧹 Bereinigen", width='stretch'):
+            struct = st.session_state.get("structure")
             orig._register_special_nodes()
             removed_orig = orig.remove_removable_nodes()
+
+            if struct:
+                struct._register_special_nodes()
+                struct.remove_removable_nodes()
             if removed_orig > 0:
                 st.session_state.structure = copy.deepcopy(orig)
                 st.session_state.history = None

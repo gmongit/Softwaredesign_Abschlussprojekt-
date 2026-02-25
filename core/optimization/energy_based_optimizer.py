@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import networkx as nx
 import numpy as np
 
 from core.model.structure import Structure
@@ -79,7 +80,6 @@ class EnergyBasedOptimizer(OptimizerBase):
 
     def _select_greedy(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
         selected: list[int] = []
-        exclude: set[int] = set()
         G = structure.build_graph()
 
         for nid in removable_sorted:
@@ -88,42 +88,61 @@ class EnergyBasedOptimizer(OptimizerBase):
             if nid not in G:
                 continue
 
-            trial_exclude = exclude | {nid}
-            if structure.is_valid_topology(exclude_nodes=trial_exclude):
+            neighbors = list(G.neighbors(nid))
+            G.remove_node(nid)
+
+            if G.number_of_nodes() > 1 and nx.is_connected(G):
                 selected.append(nid)
-                exclude = trial_exclude
-                G.remove_node(nid)
+            else:
+                G.add_node(nid)
+                for nb in neighbors:
+                    if nb in G:
+                        G.add_edge(nid, nb)
 
         return selected
 
     def _select_symmetric(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
         selected: list[int] = []
-        exclude: set[int] = set()
         processed: set[int] = set()
+        assert self.mirror_map is not None
         mm = self.mirror_map
+        removable_set = set(removable_sorted)
+        G = structure.build_graph()
+
+        def _try_remove(nids: list[int]) -> bool:
+            saved: dict[int, list[int]] = {}
+            for nid in nids:
+                if nid in G:
+                    saved[nid] = list(G.neighbors(nid))
+                    G.remove_node(nid)
+
+            valid = G.number_of_nodes() > 1 and nx.is_connected(G)
+
+            if not valid:
+                for nid, neighbors in saved.items():
+                    G.add_node(nid)
+                    for nb in neighbors:
+                        if nb in G:
+                            G.add_edge(nid, nb)
+            return valid
 
         for nid in removable_sorted:
             if len(selected) >= target_remove:
                 break
-
             if nid in processed:
                 continue
 
             mirror_id = mm.get(nid)
 
             if mirror_id is None or mirror_id == nid:
-                trial_exclude = exclude | {nid}
-                if structure.is_valid_topology(exclude_nodes=trial_exclude):
+                if _try_remove([nid]):
                     selected.append(nid)
-                    exclude = trial_exclude
                     processed.add(nid)
             else:
-                if mirror_id in removable_sorted and mirror_id not in exclude and mirror_id not in processed:
-                    trial_exclude = exclude | {nid, mirror_id}
-                    if structure.is_valid_topology(exclude_nodes=trial_exclude):
+                if mirror_id in removable_set and mirror_id not in processed:
+                    if _try_remove([nid, mirror_id]):
                         selected.append(nid)
                         selected.append(mirror_id)
-                        exclude = trial_exclude
                         processed.add(nid)
                         processed.add(mirror_id)
 

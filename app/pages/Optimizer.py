@@ -3,7 +3,7 @@ import streamlit as st
 from core.db.material_store import material_store
 from app.shared import (
     png_save_dialog, structure_save_dialog, gif_save_dialog,
-    PNG_EXPORT_SETTINGS, show_structure_status,
+    gif_generation_dialog, PNG_EXPORT_SETTINGS, show_structure_status,
 )
 from app.plots import plot_load_paths_with_arrows
 from app.service.optimization_service import (
@@ -171,22 +171,12 @@ if st.session_state.history is not None:
             st.plotly_chart(fig, width='stretch')
 
             st.divider()
-            fps = st.select_slider("FPS", options=[2, 5, 10, 15], value=5)
             if st.button("🎬 GIF generieren"):
-                progress = st.progress(0.0, text="Frames werden gerendert...")
-                gif_bytes = generate_replay_gif(
-                    st.session_state.structure, hist, fps=fps,
-                    on_progress=lambda p: progress.progress(
-                        p, text=f"Frames werden gerendert... {p:.0%}"
-                    ),
+                gif_generation_dialog(
+                    st.session_state.structure,
+                    hist,
+                    generate_replay_gif
                 )
-                st.session_state.gif_bytes = gif_bytes
-                progress.empty()
-
-            if st.session_state.get("gif_bytes"):
-                base = st.session_state.get("case_name") or "optimierung"
-                if st.button("📥 GIF herunterladen"):
-                    gif_save_dialog(st.session_state.gif_bytes, base)
 
     if fig is not None and view != "Replay":
         st.divider()

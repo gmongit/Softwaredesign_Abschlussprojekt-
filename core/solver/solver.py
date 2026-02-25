@@ -1,27 +1,60 @@
+import warnings
+
 import numpy as np
 import numpy.typing as npt
+from scipy import sparse
+from scipy.sparse.linalg import spsolve, lsqr
 
-def solve(K: npt.NDArray[np.float64], F: npt.NDArray[np.float64], u_fixed_idx: list[int]) -> npt.NDArray[np.float64] | None:
-    """Ku = F lösen. Gibt None bei Singularität zurück."""
 
+def solve(K, F: npt.NDArray[np.float64], u_fixed_idx: list[int]) -> npt.NDArray[np.float64] | None:
+    """Ku = F lösen. Reduziert auf freie DOFs, nutzt Sparse-Solver.
+    Fallback auf lsqr bei konsistenter Singularität. Gibt None bei echter Singularität zurück."""
+
+    n = K.shape[0]
     assert K.shape[0] == K.shape[1], "Stiffness matrix K must be square."
-    assert K.shape[0] == F.shape[0], "Force vector F must have the same size as K."
+    assert n == F.shape[0], "Force vector F must have the same size as K."
 
-    for d in u_fixed_idx:
-        K[d, :] = 0.0
-        K[:, d] = 0.0
-        K[d, d] = 1.0
+    fixed_set = set(u_fixed_idx)
+    free = np.array([i for i in range(n) if i not in fixed_set], dtype=np.intp)
+
+    if len(free) == 0:
+        return np.zeros(n)
+
+    if sparse.issparse(K):
+        K_ff = K[free][:, free].tocsc()
+    else:
+        K_ff = K[np.ix_(free, free)]
+
+    F_f = F[free]
 
     try:
-        u = np.linalg.solve(K, F)
-        u[u_fixed_idx] = 0.0
-        return u
-    except np.linalg.LinAlgError:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=sparse.linalg.MatrixRankWarning)
+            u_f = spsolve(K_ff, F_f) if sparse.issparse(K_ff) else np.linalg.solve(K_ff, F_f)
+
+    except (np.linalg.LinAlgError, sparse.linalg.MatrixRankWarning):
+        if not sparse.issparse(K_ff):
+            K_ff = sparse.csc_matrix(K_ff)
+        result = lsqr(K_ff, F_f)
+        u_f = result[0]
+        residual_norm = result[3]
+        if residual_norm > 1e-6:
+            return None
+
+    except RuntimeError:
         return None
+
+    u_f = np.asarray(u_f, dtype=float).ravel()
+
+    if np.any(np.isnan(u_f)) or np.any(np.isinf(u_f)):
+        return None
+
+    u = np.zeros(n)
+    u[free] = u_f
+    return u
 
 
 def test_case_horizontal():
-    # Horizontal spring element between two nodes i and j
     e_n = np.array([1.0, 0.0])
     e_n = e_n / np.linalg.norm(e_n)
 
@@ -35,19 +68,18 @@ def test_case_horizontal():
     Ko = np.kron(K, O)
     print(f"{Ko=}")
 
-    u_fixed_idx = [0, 1] # fix node i in both directions
+    u_fixed_idx = [0, 1]
 
-    F = np.array([0.0, 0.0, 10.0, 0.0]) # apply force at node j in x-direction
+    F = np.array([0.0, 0.0, 10.0, 0.0])
 
     u = solve(Ko, F, u_fixed_idx)
     print(f"{u=}")
 
 def test_case_diagonal():
-    # Diagonal spring element at 45° between two nodes i and j
     e_n = np.array([1.0, 1.0])
     e_n = e_n / np.linalg.norm(e_n)
 
-    k = 1.0 / np.sqrt(2.0) # diagonal spring has less stiffness
+    k = 1.0 / np.sqrt(2.0)
     K = k * np.array([[1.0, -1.0], [-1.0, 1.0]])
     print(f"{K=}")
 
@@ -57,9 +89,9 @@ def test_case_diagonal():
     Ko = np.kron(K, O)
     print(f"{Ko=}")
 
-    u_fixed_idx = [0, 1] # fix node i in both directions
+    u_fixed_idx = [0, 1]
 
-    F = np.array([0.0, 0.0, 1.0, 1.0]) # apply force at node j in diagonal direction
+    F = np.array([0.0, 0.0, 1.0, 1.0])
 
     u = solve(Ko, F, u_fixed_idx)
     print(f"{u=}")

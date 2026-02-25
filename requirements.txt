@@ -7,3 +7,4 @@ networkx
 tinydb
 Pillow
 pytest
+scipy

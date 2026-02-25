@@ -58,3 +58,35 @@ def gif_save_dialog(gif_bytes: bytes, default_name: str = "optimierung"):
         mime="image/gif",
         width='stretch',
     )
+
+
+@st.dialog("GIF generieren", width="small")
+def gif_generation_dialog(structure, hist, generate_gif_fn):
+    """Dialog-Popup für GIF-Generierung mit FPS-Slider, Loading Bar und Download."""
+    st.markdown("**GIF-Einstellungen**")
+    fps = st.select_slider("FPS", options=[2, 5, 10, 15], value=5)
+
+    st.markdown("**Dateiname**")
+    default_name = st.session_state.get("case_name") or "optimierung"
+    filename = st.text_input("Filename (ohne .gif)", value=default_name, key="gif_filename_input")
+
+    if st.button("▶ Rendern", use_container_width=True, type="primary"):
+        progress = st.progress(0.0, text="Frames werden gerendert...")
+        gif_bytes = generate_gif_fn(
+            structure, hist, fps=fps,
+            on_progress=lambda p: progress.progress(
+                p, text=f"Frames werden gerendert... {p:.0%}"
+            ),
+        )
+        progress.empty()
+
+        st.success("✅ GIF fertig!")
+        st.divider()
+
+        st.download_button(
+            label="📥 Herunterladen",
+            data=gif_bytes,
+            file_name=f"{filename}.gif",
+            mime="image/gif",
+            use_container_width=True,
+        )

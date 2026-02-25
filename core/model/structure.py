@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import networkx as nx
 import numpy as np
+from scipy import sparse
 
 from core.model.node import Node
 from core.model.spring import Spring
@@ -58,24 +59,15 @@ class Structure:
         exclude = exclude_nodes or set()
         G = self.build_graph(exclude)
 
-        if G.number_of_nodes() <= 1:
-            return False
-
-        if not nx.is_connected(G):
-            return False
-
-        current_supports = self.support_ids - exclude
-        current_loads = self.load_ids - exclude
-
-        if not current_loads:
-            return True
-        if not current_supports:
-            return False
+        if G.number_of_nodes() <= 1: return False
+        if not nx.is_connected(G): return False
 
         return True
 
     def _find_removable_nodes(self) -> set[int]:
         """Findet strukturell nutzlose Knoten: isolierte Inseln + tote Äste."""
+        if not self.support_ids and not self.load_ids:
+            self._register_special_nodes()
         protected = self._protected_ids()
         removable: set[int] = set()
         G = self.build_graph()
@@ -87,7 +79,7 @@ class Structure:
             if not has_support or not has_load:
                 removable |= comp
 
-        # Wenn ein Teilgraph nur über einen Knoten erreichbar ist (Ohne Lager, Last)
+        # Sackgassen: Äste die nur über einen Knoten (AP) am Hauptpfad hängen
         changed = True
         while changed:
             changed = False
@@ -99,6 +91,9 @@ class Structure:
             for ap in list(nx.articulation_points(work)):
                 work_without = work.copy()
                 work_without.remove_node(ap)
+
+                dead_end_frags: list[set[int]] = []
+                important_frag_count = 0
 
                 for fragment in nx.connected_components(work_without):
                     if fragment.isdisjoint(protected):
@@ -142,8 +137,11 @@ class Structure:
 
         return list(direct | neighbors)
 
-    def assemble_K(self) -> np.ndarray:
-        K = np.zeros((self.ndof, self.ndof), dtype=float)
+    def assemble_K(self) -> sparse.csr_matrix:
+        """Baut die globale Steifigkeitsmatrix als Sparse-Matrix (CSR)."""
+        rows: list[int] = []
+        cols: list[int] = []
+        vals: list[float] = []
 
         for spring in self.springs:
             if not spring.active:
@@ -157,16 +155,18 @@ class Structure:
 
             Ke = spring.element_stiffness_matrix(ni, nj)
 
-            dofs = [
-                ni.dof_x, ni.dof_y,
-                nj.dof_x, nj.dof_y,
-            ]
+            dofs = [ni.dof_x, ni.dof_y, nj.dof_x, nj.dof_y]
 
             for a in range(4):
                 for b in range(4):
-                    K[dofs[a], dofs[b]] += Ke[a, b]
+                    rows.append(dofs[a])
+                    cols.append(dofs[b])
+                    vals.append(Ke[a, b])
 
-        return K
+        return sparse.csr_matrix(
+            (vals, (rows, cols)),
+            shape=(self.ndof, self.ndof),
+        )
 
     def assemble_F(self) -> np.ndarray:
         F = np.zeros(self.ndof, dtype=float)

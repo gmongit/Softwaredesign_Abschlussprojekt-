@@ -103,8 +103,6 @@ class Structure:
                 for fragment in nx.connected_components(work_without):
                     if fragment.isdisjoint(protected):
                         removable |= fragment
-                        if ap not in protected:
-                            removable.add(ap)
                         changed = True
         return removable
 

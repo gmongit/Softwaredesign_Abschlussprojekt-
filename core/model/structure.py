@@ -46,7 +46,7 @@ class Structure:
                 G.add_edge(ni.id, nj.id)
 
         return G
-    
+
     def _register_special_nodes(self) -> None:
         """Sucht Lager und Lastknoten und Speichert diese"""
         self.support_ids = {n.id for n in self.nodes if n.fix_x or n.fix_y}
@@ -54,30 +54,24 @@ class Structure:
         self.protected_base = self.support_ids | self.load_ids
 
     def is_valid_topology(self, exclude_nodes: set[int] | None = None) -> bool:
-        """Prüft Zusammenhang und Lastpfade (Last -> Lager)."""
+        """Prüft ob Struktur zusammenhängend, belastet und gelagert ist."""
         exclude = exclude_nodes or set()
         G = self.build_graph(exclude)
 
         if G.number_of_nodes() <= 1:
-            return True
+            return False
+
         if not nx.is_connected(G):
             return False
 
         current_supports = self.support_ids - exclude
-        current_loads = [lid for lid in self.load_ids if lid not in exclude]
+        current_loads = self.load_ids - exclude
 
         if not current_loads:
             return True
         if not current_supports:
             return False
 
-        for lid in current_loads: 
-            if lid not in G:
-                return False
-            reachable = nx.node_connected_component(G, lid)
-            if reachable.isdisjoint(current_supports):
-                return False
-            
         return True
 
     def _find_removable_nodes(self) -> set[int]:
@@ -100,12 +94,12 @@ class Structure:
             remaining = set(G.nodes()) - removable
             if len(remaining) < 2:
                 break
-            
+
             work = G.subgraph(remaining).copy()
             for ap in list(nx.articulation_points(work)):
                 work_without = work.copy()
                 work_without.remove_node(ap)
-                
+
                 for fragment in nx.connected_components(work_without):
                     if fragment.isdisjoint(protected):
                         removable |= fragment

@@ -5,6 +5,8 @@ import streamlit as st
 from PIL import Image
 
 from core.db.case_store import case_store
+from app.shared import png_save_dialog, structure_save_dialog, PNG_EXPORT_SETTINGS, show_structure_status
+from app.service.optimization_service import validate_structure
 from app.service.structure_service import (
     create_rectangular_grid,
     create_structure_from_image,
@@ -215,45 +217,11 @@ if orig is not None:
                 st.session_state.history = None
             st.rerun()
 
-    # Validierung
-    supports = [n for n in orig.nodes if n.active and (n.fix_x or n.fix_y)]
-    loads = [n for n in orig.nodes if n.active and (abs(n.fx) > 0 or abs(n.fy) > 0)]
-    has_fix_x = any(n.fix_x for n in supports)
-    has_fix_y = any(n.fix_y for n in supports)
-
-    removable_count = len(orig._find_removable_nodes())
-
-    if supports and loads and has_fix_x and has_fix_y:
-        status = f"✅ {len(supports)} Lager, {len(loads)} Lastknoten"
-        if removable_count > 0:
-            status += f", {removable_count} entfernbare Knoten"
-        else:
-            status += " — bereit"
-        st.caption(status)
-    else:
-        missing = []
-        if not has_fix_y:
-            missing.append("Lager (fix_y)")
-        if not has_fix_x:
-            missing.append("Lager (fix_x)")
-        if not loads:
-            missing.append("Lastknoten")
-        info = f"⚠️ Fehlend: {', '.join(missing)}"
-        if removable_count > 0:
-            info += f" | {removable_count} entfernbare Knoten"
-        st.caption(info)
-
     # Struktur-Tools
     col_check, col_sym, col_remove = st.columns(3)
     with col_check:
         if st.button("🔍 Struktur prüfen", width='stretch'):
-            orig._register_special_nodes()
-            if not orig.is_valid_topology():
-                st.error("Struktur ist nicht zusammenhängend oder Lastpfad unterbrochen.")
-            elif not supports or not loads or not has_fix_x or not has_fix_y:
-                st.warning("Topologie ok, aber Randbedingungen unvollständig.")
-            else:
-                st.success("Struktur ist gültig und bereit für die Optimierung.")
+            show_structure_status(validate_structure(orig))
     with col_sym:
         if st.button("🔄 Symmetrie prüfen", width='stretch'):
             is_sym, _ = orig.detect_symmetry()
@@ -278,26 +246,14 @@ if orig is not None:
             else:
                 st.info("Keine Inseln oder Sackgassen gefunden.")
 
-    # PNG Export
+    # Export-Buttons
     active_name = st.session_state.get("case_name_main") or "struktur"
-    st.download_button(
-        label="📥 Als PNG speichern",
-        data=fig.to_image(format="png", width=1600, height=600, scale=2),
-        file_name=f"{active_name}.png",
-        mime="image/png",
-    )
-
-    # Struktur speichern — für alle 3 Modi verfügbar
-    st.subheader("Struktur speichern")
-    case_name = st.text_input("Name", value=active_name or "Balken", placeholder="Eindeutiger Name", key="case_name_save")
-    if st.button("💾 Speichern", type="primary", width='stretch'):
-        if not st.session_state.get("structure"):
-            st.error("Keine Struktur vorhanden.")
-        else:
-            try:
-                case_store.save_case(case_name, st.session_state.structure, st.session_state.history)
-                st.success(f"'{case_name}' gespeichert.")
-            except ValueError as e:
-                st.error(str(e))
+    col_png, col_save = st.columns(2)
+    with col_png:
+        if st.button("📥 Als PNG speichern", width='stretch'):
+            png_save_dialog(fig.to_image(**PNG_EXPORT_SETTINGS), active_name)
+    with col_save:
+        if st.button("💾 Struktur speichern", width='stretch'):
+            structure_save_dialog(active_name)
 else:
     st.info("Erstelle eine Struktur oder lade einen gespeicherten Case.")

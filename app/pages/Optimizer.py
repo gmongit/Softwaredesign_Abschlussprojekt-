@@ -1,11 +1,16 @@
 import numpy as np
 import streamlit as st
 from core.db.material_store import material_store
+from app.shared import (
+    png_save_dialog, structure_save_dialog, gif_save_dialog,
+    PNG_EXPORT_SETTINGS, show_structure_status,
+)
 from app.plots import plot_load_paths_with_arrows
 from app.service.optimization_service import (
     optimize_structure,
     compute_displacement,
     compute_forces,
+    validate_structure,
 )
 from app.plots import (
     plot_structure,
@@ -46,7 +51,10 @@ with st.sidebar:
     remove_fraction = st.slider("Entfernungsrate / Iteration", 0.01, 0.2, 0.05, 0.01)
     max_iters       = st.number_input("Max. Iterationen", 10, 500, 120, 10)
 
-    if st.button("▶ Optimierung starten", type="primary"):
+    validation = validate_structure(st.session_state.structure)
+    show_structure_status(validation)
+
+    if st.button("▶ Optimierung starten", type="primary", disabled=not validation.ok):
         try:
             hist = optimize_structure(
                 st.session_state.structure,
@@ -58,13 +66,8 @@ with st.sidebar:
             )
             st.session_state.history = hist
             st.session_state.gif_bytes = None
-            
-            # Für die Erfolgsmeldung kurz prüfen, ob Symmetrie genutzt wurde
-            is_sym, _ = st.session_state.structure.detect_symmetry()
-            mode = "symmetrisch" if is_sym else "normal"
             mf = st.session_state.structure.current_mass_fraction()
-            st.success(f"Fertig ({mode})! Masse: {mf:.1%}")
-            
+            st.success(f"Fertig! Masse: {mf:.1%}")
         except ValueError as e:
             st.error(str(e))
 
@@ -181,25 +184,20 @@ if st.session_state.history is not None:
                 progress.empty()
 
             if st.session_state.get("gif_bytes"):
-                base = st.session_state.get("case_name") or ""
-                filename = f"{base}_optimierung.gif" if base else "optimierung.gif"
-                st.download_button(
-                    label="📥 GIF herunterladen",
-                    data=st.session_state.gif_bytes,
-                    file_name=filename,
-                    mime="image/gif",
-                )
+                base = st.session_state.get("case_name") or "optimierung"
+                if st.button("📥 GIF herunterladen"):
+                    gif_save_dialog(st.session_state.gif_bytes, base)
 
     if fig is not None and view != "Replay":
         st.divider()
-        base = st.session_state.get("case_name") or ""
-        filename = f"{base}.png" if base else "struktur.png"
-        st.download_button(
-            label="📥 Als PNG speichern",
-            data=fig.to_image(format="png", width=1600, height=600, scale=2),
-            file_name=filename,
-            mime="image/png",
-        )
+        base = st.session_state.get("case_name") or "struktur"
+        col_png, col_save = st.columns(2)
+        with col_png:
+            if st.button("📥 Als PNG speichern", width='stretch'):
+                png_save_dialog(fig.to_image(**PNG_EXPORT_SETTINGS), base)
+        with col_save:
+            if st.button("💾 Struktur speichern", width='stretch'):
+                structure_save_dialog(base)
 
     # --- Metriken ---
     structure = st.session_state.structure

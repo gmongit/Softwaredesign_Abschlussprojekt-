@@ -50,7 +50,13 @@ class EnergyBasedOptimizer(OptimizerBase):
 
         return importance
 
-    def _select_removal_candidates(self, structure: Structure, importance: np.ndarray, effective_fraction: float) -> list[int]:
+    def _select_removal_candidates(
+        self,
+        structure: Structure,
+        importance: np.ndarray,
+        effective_fraction: float,
+        blacklist: set[int] | None = None,
+    ) -> list[int]:
         active_ids = [n.id for n in structure.nodes if n.active]
         if len(active_ids) == 0:
             return []
@@ -58,6 +64,8 @@ class EnergyBasedOptimizer(OptimizerBase):
         target_remove = max(1, int(len(active_ids) * effective_fraction))
 
         protected = set(structure.protected_node_ids())
+        if blacklist:
+            protected |= blacklist
         removable = [i for i in active_ids if i not in protected]
         if len(removable) == 0:
             return []
@@ -71,24 +79,27 @@ class EnergyBasedOptimizer(OptimizerBase):
 
     def _select_greedy(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
         selected: list[int] = []
-        exclude = set()
+        exclude: set[int] = set()
+        G = structure.build_graph()
 
         for nid in removable_sorted:
             if len(selected) >= target_remove:
                 break
+            if nid not in G:
+                continue
 
             trial_exclude = exclude | {nid}
-
             if structure.is_valid_topology(exclude_nodes=trial_exclude):
                 selected.append(nid)
                 exclude = trial_exclude
+                G.remove_node(nid)
 
         return selected
 
     def _select_symmetric(self, structure: Structure, removable_sorted: list[int], target_remove: int) -> list[int]:
         selected: list[int] = []
-        exclude = set()
-        processed = set()
+        exclude: set[int] = set()
+        processed: set[int] = set()
         mm = self.mirror_map
 
         for nid in removable_sorted:
@@ -128,6 +139,25 @@ class EnergyBasedOptimizer(OptimizerBase):
             if spring.node_i in to_remove or spring.node_j in to_remove:
                 spring.active = False
 
+    def _reactivate_nodes(self, structure: Structure, node_ids: list[int]) -> None:
+        to_restore = set(node_ids)
+
+        for node_id in to_restore:
+            structure.nodes[node_id].active = True
+
+        for spring in structure.springs:
+            ni = spring.node_i
+            nj = spring.node_j
+            if (ni in to_restore or structure.nodes[ni].active) and \
+               (nj in to_restore or structure.nodes[nj].active):
+                spring.active = True
+
+    def _solve_structure(self, structure: Structure) -> np.ndarray | None:
+        K = structure.assemble_K()
+        F = structure.assemble_F()
+        fixed = structure.fixed_dofs()
+        return solve(K, F, fixed)
+
     def _effective_remove_fraction(self, iter_idx: int) -> float:
         if self.ramp_iters == 0:
             return self.remove_fraction
@@ -147,40 +177,80 @@ class EnergyBasedOptimizer(OptimizerBase):
         if max_iters <= 0:
             raise ValueError("max_iters must be > 0.")
 
-        history = OptimizationHistory(mass_fraction=[], removed_per_iter=[], removed_nodes_per_iter=[], active_nodes=[], max_displacement=[])
+        history = OptimizationHistory(
+            mass_fraction=[], removed_per_iter=[],
+            removed_nodes_per_iter=[], active_nodes=[], max_displacement=[],
+        )
 
         structure._register_special_nodes()
 
-        for iter_idx in range(max_iters):
-            history.mass_fraction.append(structure.current_mass_fraction())
+        is_sym, mirror_map = structure.detect_symmetry()
+        if is_sym:
+            self.mirror_map = mirror_map
 
+        blacklist: set[int] = set()
+        needs_solve = True
+        u: np.ndarray | None = None
+
+        for iter_idx in range(max_iters):
+            removed = structure.remove_removable_nodes()
+            if removed > 0:
+                needs_solve = True
+
+            history.mass_fraction.append(structure.current_mass_fraction())
             if structure.current_mass_fraction() <= target_mass_fraction:
                 break
 
-            effective_fraction = self._effective_remove_fraction(iter_idx)
+            if needs_solve:
+                u = self._solve_structure(structure)
+                if u is None:
+                    break
+                needs_solve = False
 
-            K = structure.assemble_K()
-            F = structure.assemble_F()
-            fixed = structure.fixed_dofs()
-
-            u = solve(K, F, fixed)
-            if u is None:
-                break
-
+            assert u is not None
             max_u = float(np.max(np.abs(u))) if u.size > 0 else 0.0
             history.max_displacement.append(max_u)
 
             importance = structure.node_importance_from_energy(u)
 
             effective_fraction = self._effective_remove_fraction(iter_idx)
-            candidates = self._select_removal_candidates(structure, importance, effective_fraction)
+            candidates = self._select_removal_candidates(
+                structure, importance, effective_fraction, blacklist,
+            )
 
             if len(candidates) == 0:
-                history.removed_per_iter.append(0)
                 break
 
             self._deactivate_nodes(structure, candidates)
-            history.removed_per_iter.append(len(candidates))
-            history.removed_nodes_per_iter.append(list(candidates))
+
+            u_check = self._solve_structure(structure)
+
+            if u_check is not None:
+                u = u_check
+                history.removed_per_iter.append(len(candidates))
+                history.removed_nodes_per_iter.append(list(candidates))
+                continue
+
+            self._reactivate_nodes(structure, candidates)
+
+            actually_removed: list[int] = []
+            for nid in candidates:
+                self._deactivate_nodes(structure, [nid])
+                u_single = self._solve_structure(structure)
+
+                if u_single is None:
+                    self._reactivate_nodes(structure, [nid])
+                    blacklist.add(nid)
+                    if mirror_map and nid in mirror_map:
+                        blacklist.add(mirror_map[nid])
+                else:
+                    u = u_single
+                    actually_removed.append(nid)
+
+            if len(actually_removed) == 0:
+                break
+
+            history.removed_per_iter.append(len(actually_removed))
+            history.removed_nodes_per_iter.append(actually_removed)
 
         return history

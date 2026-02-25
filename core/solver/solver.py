@@ -1,25 +1,8 @@
 import numpy as np
 import numpy.typing as npt
 
-def solve(K: npt.NDArray[np.float64], F: npt.NDArray[np.float64], u_fixed_idx: list[int], eps=1e-9) -> npt.NDArray[np.float64] | None:
-    """Solve the linear system Ku = F with fixed boundary conditions.
-
-    Parameters
-    ----------
-    K : npt.NDArray[np.float64]
-        Stiffness matrix.
-    F : npt.NDArray[np.float64]
-        Force vector.
-    u_fixed_idx : list[int]
-        List of indices where the displacement is fixed (Dirichlet boundary conditions).
-    eps : float, optional
-        Regularization parameter to avoid singular matrix, by default 1e-9
-
-    Returns
-    -------
-    npt.NDArray[np.float64] | None
-        Displacement vector or None if the system is unsolvable.
-    """
+def solve(K: npt.NDArray[np.float64], F: npt.NDArray[np.float64], u_fixed_idx: list[int]) -> npt.NDArray[np.float64] | None:
+    """Ku = F lösen. Gibt None bei Singularität zurück."""
 
     assert K.shape[0] == K.shape[1], "Stiffness matrix K must be square."
     assert K.shape[0] == F.shape[0], "Force vector F must have the same size as K."
@@ -30,26 +13,12 @@ def solve(K: npt.NDArray[np.float64], F: npt.NDArray[np.float64], u_fixed_idx: l
         K[d, d] = 1.0
 
     try:
-        u = np.linalg.solve(K, F) # solve the linear system Ku = F
+        u = np.linalg.solve(K, F)
         u[u_fixed_idx] = 0.0
-
         return u
-    
     except np.linalg.LinAlgError:
-        # If the stiffness matrix is singular we can try a regularization to still get a solution.
-        # Use a relative eps so it works with both small (k=1) and large (k=7e9) stiffness values. necessary for matierial based k-factors 
-        eps_adaptive = max(float(np.max(np.abs(K))), 1.0) * 1e-8
-        K += np.eye(K.shape[0]) * eps_adaptive
+        return None
 
-        try:
-            u = np.linalg.solve(K, F) # solve the linear system Ku = F
-            u[u_fixed_idx] = 0.0
-
-            return u
-        
-        except np.linalg.LinAlgError:
-            # If it is still singular we give up
-            return None
 
 def test_case_horizontal():
     # Horizontal spring element between two nodes i and j
@@ -100,4 +69,3 @@ if __name__ == "__main__":
     test_case_horizontal()
 
     test_case_diagonal()
-

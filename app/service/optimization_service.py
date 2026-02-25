@@ -1,9 +1,53 @@
 import numpy as np
+from dataclasses import dataclass, field
 
 from core.model.structure import Structure
 from core.db.material_store import material_store
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer
 from core.solver.solver import solve
+
+
+@dataclass
+class StructureValidation:
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    removable_count: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return len(self.errors) == 0
+
+
+def validate_structure(structure: Structure) -> StructureValidation:
+    """Prüft Topologie, Randbedingungen und Lösbarkeit. Ohne Seiteneffekte."""
+    result = StructureValidation()
+    structure._register_special_nodes()
+    nodes = [n for n in structure.nodes if n.active]
+
+    has_festlager = any(n.fix_x and n.fix_y for n in nodes)
+    has_loslager = any(n.fix_y and not n.fix_x for n in nodes)
+    has_last = any(abs(n.fx) > 0 or abs(n.fy) > 0 for n in nodes)
+
+    if not has_festlager:
+        result.errors.append("Kein Festlager vorhanden")
+    if not has_loslager:
+        result.errors.append("Kein Loslager vorhanden")
+    if not has_last:
+        result.errors.append("Keine Last vorhanden")
+
+    if not structure.is_valid_topology():
+        result.errors.append("Struktur nicht zusammenhängend oder Lastpfad unterbrochen")
+
+    if result.ok:
+        u = compute_displacement(structure)
+        if u is None:
+            result.errors.append("Struktur ist bereits singulär (nicht lösbar)")
+
+    result.removable_count = len(structure._find_removable_nodes())
+    if result.removable_count > 0:
+        result.warnings.append(f"{result.removable_count} entfernbare Knoten (Inseln/Sackgassen)")
+
+    return result
 
 
 def prepare_structure(structure: Structure, material_name: str | None, beam_area_mm2: float) -> None:
@@ -31,7 +75,6 @@ def run_optimization(
     remove_fraction: float,
     target_mass_fraction: float,
     max_iters: int,
-    mirror_map: dict[int, int] | None = None,
 ):
     """Startet die Topologie-Optimierung und gibt die History zurück."""
 
@@ -40,7 +83,6 @@ def run_optimization(
         remove_fraction=remove_fraction,
         start_factor=0.3,
         ramp_iters=10,
-        mirror_map=mirror_map,
     )
     return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters)
 
@@ -56,12 +98,10 @@ def optimize_structure(
     """
     Führt den gesamten Optimierungsprozess durch:
     1. Vorbereitung (Material, Steifigkeiten)
-    2. Symmetrie-Erkennung
-    3. Optimierungsschleife
+    2. Optimierungsschleife (inkl. Symmetrie-Erkennung)
     """
     prepare_structure(structure, material_name, beam_area_mm2)
-    _, mirror_map = structure.detect_symmetry()
-    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters, mirror_map)
+    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters)
 
 
 def _validate_boundary_conditions(structure: Structure):

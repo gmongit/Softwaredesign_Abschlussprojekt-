@@ -6,16 +6,17 @@ import numpy as np
 from core.model.structure import Structure
 from core.solver.solver import solve
 from core.optimization.optimizer_base import OptimizerBase
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
 class OptimizationHistory:
-    mass_fraction: list[float]
-    removed_per_iter: list[int]
-    removed_nodes_per_iter: list[list[int]]
-    active_nodes: list[int]
-    max_displacement: list[float]
+    mass_fraction: list[float] = field(default_factory=list)
+    removed_per_iter: list[int] = field(default_factory=list)
+    removed_nodes_per_iter: list[list[int]] = field(default_factory=list)
+    active_nodes: list[int] = field(default_factory=list)
+    max_displacement: list[float] = field(default_factory=list)
+    stop_reason: str = ""
 
 class EnergyBasedOptimizer(OptimizerBase):
     def __init__(
@@ -185,11 +186,55 @@ class EnergyBasedOptimizer(OptimizerBase):
         ramp = self.start_factor + (1.0 - self.start_factor) * t
         return self.remove_fraction * ramp
 
+    def _exceeds_stress(self, structure: Structure, u: np.ndarray, max_stress: float | None) -> bool:
+        if max_stress is None:
+            return False
+        return structure.max_stress(u) > max_stress
+
+    def _try_stress_redistribution(
+        self,
+        structure: Structure,
+        u: np.ndarray,
+        blacklist: set[int],
+        mirror_map: dict[int, int] | None,
+    ) -> bool:
+        protected = set(structure.protected_node_ids()) | blacklist
+        pair = structure.most_stressed_spring_nodes(u)
+        if pair is None:
+            return False
+
+        removable = [nid for nid in pair if nid not in protected]
+        if not removable:
+            return False
+
+        old_stress = structure.max_stress(u)
+        self._deactivate_nodes(structure, removable)
+        u_new = self._solve_structure(structure)
+
+        if u_new is not None and structure.max_stress(u_new) < old_stress:
+            return True
+
+        self._reactivate_nodes(structure, removable)
+        blacklist.update(removable)
+        if mirror_map:
+            for nid in removable:
+                if nid in mirror_map:
+                    blacklist.add(mirror_map[nid])
+
+        return False
+
+    def _blacklist_with_mirror(self, nids: list[int], blacklist: set[int], mirror_map: dict[int, int] | None) -> None:
+        for nid in nids:
+            blacklist.add(nid)
+            if mirror_map and nid in mirror_map:
+                blacklist.add(mirror_map[nid])
+
     def run(
         self,
         structure: Structure,
         target_mass_fraction: float,
         max_iters: int = 200,
+        max_stress: float | None = None,
         on_iter=None,
         force: bool = False,
     ) -> OptimizationHistory:
@@ -198,10 +243,7 @@ class EnergyBasedOptimizer(OptimizerBase):
         if max_iters <= 0:
             raise ValueError("max_iters must be > 0.")
 
-        history = OptimizationHistory(
-            mass_fraction=[], removed_per_iter=[],
-            removed_nodes_per_iter=[], active_nodes=[], max_displacement=[],
-        )
+        history = OptimizationHistory()
 
         structure._register_special_nodes()
 
@@ -210,11 +252,11 @@ class EnergyBasedOptimizer(OptimizerBase):
             self.mirror_map = mirror_map
 
         if force:
-            # Erzwungener Modus: alle FEM-Sicherheitschecks deaktiviert
             for iter_idx in range(max_iters):
                 structure.remove_removable_nodes()
                 history.mass_fraction.append(structure.current_mass_fraction())
                 if structure.current_mass_fraction() <= target_mass_fraction:
+                    history.stop_reason = "Ziel-Massenanteil erreicht"
                     break
                 u = self._solve_structure(structure)
                 importance = (
@@ -225,17 +267,29 @@ class EnergyBasedOptimizer(OptimizerBase):
                 effective_fraction = self._effective_remove_fraction(iter_idx)
                 candidates = self._select_removal_candidates(structure, importance, effective_fraction)
                 if not candidates:
+                    history.stop_reason = "Keine entfernbaren Knoten mehr"
                     break
                 self._deactivate_nodes(structure, candidates)
                 history.removed_per_iter.append(len(candidates))
                 history.removed_nodes_per_iter.append(list(candidates))
                 if on_iter is not None:
                     on_iter(structure, iter_idx, len(candidates))
+            else:
+                history.stop_reason = "Max. Iterationen erreicht"
             return history
 
+        u = self._solve_structure(structure)
+
+        if max_stress is not None:
+            if u is None:
+                history.stop_reason = "Struktur ist instabil"
+                return history
+            if structure.max_stress(u) > max_stress:
+                history.stop_reason = "Ausgangsspannung überschreitet bereits die Streckgrenze"
+                return history
+
         blacklist: set[int] = set()
-        needs_solve = True
-        u: np.ndarray | None = None
+        needs_solve = u is None
 
         for iter_idx in range(max_iters):
             removed_set = structure._find_removable_nodes()
@@ -245,6 +299,7 @@ class EnergyBasedOptimizer(OptimizerBase):
 
             history.mass_fraction.append(structure.current_mass_fraction())
             if structure.current_mass_fraction() <= target_mass_fraction:
+                history.stop_reason = "Ziel-Massenanteil erreicht"
                 break
 
             if needs_solve:
@@ -254,12 +309,23 @@ class EnergyBasedOptimizer(OptimizerBase):
                         self._reactivate_nodes(structure, list(removed_set))
                         u = self._solve_structure(structure)
                     if u is None:
+                        history.stop_reason = "Struktur ist instabil"
                         break
                 needs_solve = False
 
             assert u is not None
             max_u = float(np.max(np.abs(u))) if u.size > 0 else 0.0
             history.max_displacement.append(max_u)
+
+            if self._exceeds_stress(structure, u, max_stress):
+                assert max_stress is not None
+                if not self._try_stress_redistribution(structure, u, blacklist, mirror_map):
+                    history.stop_reason = "Streckgrenze erreicht"
+                    break
+                u = self._solve_structure(structure)
+                if u is None:
+                    history.stop_reason = "Struktur instabil nach Lastumverteilung"
+                    break
 
             importance = structure.node_importance_from_energy(u)
 
@@ -269,13 +335,17 @@ class EnergyBasedOptimizer(OptimizerBase):
             )
 
             if len(candidates) == 0:
+                history.stop_reason = "Keine entfernbaren Knoten mehr"
                 break
 
             self._deactivate_nodes(structure, candidates)
-
             u_check = self._solve_structure(structure)
 
             if u_check is not None:
+                if self._exceeds_stress(structure, u_check, max_stress):
+                    self._reactivate_nodes(structure, candidates)
+                    history.stop_reason = "Streckgrenze erreicht"
+                    break
                 u = u_check
                 history.removed_per_iter.append(len(candidates))
                 history.removed_nodes_per_iter.append(list(candidates))
@@ -285,26 +355,42 @@ class EnergyBasedOptimizer(OptimizerBase):
 
             self._reactivate_nodes(structure, candidates)
 
-            actually_removed: list[int] = []
+            seen: set[int] = set()
+            groups: list[list[int]] = []
+            candidate_set = set(candidates)
             for nid in candidates:
-                self._deactivate_nodes(structure, [nid])
-                u_single = self._solve_structure(structure)
-
-                if u_single is None:
-                    self._reactivate_nodes(structure, [nid])
-                    blacklist.add(nid)
-                    if mirror_map and nid in mirror_map:
-                        blacklist.add(mirror_map[nid])
+                if nid in seen:
+                    continue
+                mid = self.mirror_map.get(nid) if self.mirror_map else None
+                if mid is not None and mid != nid and mid in candidate_set and mid not in seen:
+                    groups.append([nid, mid])
+                    seen.update([nid, mid])
                 else:
-                    u = u_single
-                    actually_removed.append(nid)
+                    groups.append([nid])
+                    seen.add(nid)
+
+            actually_removed: list[int] = []
+            for group in groups:
+                self._deactivate_nodes(structure, group)
+                u_test = self._solve_structure(structure)
+
+                if u_test is None or self._exceeds_stress(structure, u_test, max_stress):
+                    self._reactivate_nodes(structure, group)
+                    self._blacklist_with_mirror(group, blacklist, mirror_map)
+                else:
+                    u = u_test
+                    actually_removed.extend(group)
 
             if len(actually_removed) == 0:
+                history.stop_reason = "Keine weitere Optimierung möglich"
                 break
 
             history.removed_per_iter.append(len(actually_removed))
             history.removed_nodes_per_iter.append(actually_removed)
             if on_iter is not None:
                 on_iter(structure, iter_idx, len(actually_removed))
+
+        else:
+            history.stop_reason = "Max. Iterationen erreicht"
 
         return history

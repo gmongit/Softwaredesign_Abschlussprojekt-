@@ -3,8 +3,16 @@ from dataclasses import dataclass, field
 
 from core.model.structure import Structure
 from core.db.material_store import material_store
-from core.optimization.energy_based_optimizer import EnergyBasedOptimizer
+from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, OptimizationHistory
+from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
 from core.solver.solver import solve
+
+_TERMINAL_REASONS = {
+    "Ziel-Massenanteil erreicht",
+    "Max. Iterationen erreicht",
+    "Streckgrenze erreicht",
+    "Ausgangsspannung überschreitet bereits die Streckgrenze",
+}
 
 
 @dataclass
@@ -75,6 +83,7 @@ def run_optimization(
     remove_fraction: float,
     target_mass_fraction: float,
     max_iters: int,
+    max_stress: float | None = None,
     on_iter=None,
     force: bool = False,
 ):
@@ -86,7 +95,14 @@ def run_optimization(
         start_factor=0.3,
         ramp_iters=10,
     )
-    return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters, on_iter=on_iter, force=force)
+    return opt.run(
+        structure,
+        target_mass_fraction=target_mass_fraction,
+        max_iters=max_iters,
+        max_stress=max_stress,
+        on_iter=on_iter,
+        force=force,
+    )
 
 
 def optimize_structure(
@@ -96,6 +112,7 @@ def optimize_structure(
     remove_fraction: float,
     target_mass_fraction: float,
     max_iters: int,
+    max_stress: float | None = None,
     on_iter=None,
     force: bool = False,
 ):
@@ -105,7 +122,88 @@ def optimize_structure(
     2. Optimierungsschleife (inkl. Symmetrie-Erkennung)
     """
     prepare_structure(structure, material_name, beam_area_mm2)
-    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters, on_iter=on_iter, force=force)
+    return run_optimization(
+        structure, remove_fraction, target_mass_fraction, max_iters,
+        max_stress=max_stress, on_iter=on_iter, force=force,
+    )
+
+
+def is_retryable(history) -> bool:
+    return bool(history.stop_reason and history.stop_reason not in _TERMINAL_REASONS)
+
+
+def continue_optimization(
+    structure: Structure,
+    history: OptimizationHistory,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+) -> None:
+    """Setzt die Optimierung fort und merged die History."""
+    hist_new = run_optimization(
+        structure, remove_fraction, target_mass_fraction, max_iters,
+        max_stress=max_stress, on_iter=on_iter,
+    )
+    history.mass_fraction.extend(hist_new.mass_fraction)
+    history.removed_per_iter.extend(hist_new.removed_per_iter)
+    history.removed_nodes_per_iter.extend(hist_new.removed_nodes_per_iter)
+    history.max_displacement.extend(hist_new.max_displacement)
+    history.stop_reason = hist_new.stop_reason
+
+
+def run_dynamic_optimization(
+    structure: Structure,
+    omega_excitation: float,
+    alpha: float,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+    force: bool = False,
+) -> DynamicOptimizationHistory:
+    """Startet die dynamische Topologie-Optimierung und gibt die History zurück."""
+    _validate_boundary_conditions(structure)
+    opt = DynamicOptimizer(
+        omega_excitation=omega_excitation,
+        alpha=alpha,
+        remove_fraction=remove_fraction,
+    )
+    return opt.run(
+        structure,
+        target_mass_fraction=target_mass_fraction,
+        max_iters=max_iters,
+        max_stress=max_stress,
+        on_iter=on_iter,
+        force=force,
+    )
+
+
+def continue_dynamic_optimization(
+    structure: Structure,
+    history: DynamicOptimizationHistory,
+    omega_excitation: float,
+    alpha: float,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+) -> None:
+    """Setzt die dynamische Optimierung fort und merged die History."""
+    hist_new = run_dynamic_optimization(
+        structure, omega_excitation, alpha,
+        remove_fraction, target_mass_fraction, max_iters,
+        max_stress=max_stress, on_iter=on_iter,
+    )
+    history.mass_fraction.extend(hist_new.mass_fraction)
+    history.removed_per_iter.extend(hist_new.removed_per_iter)
+    history.omega_1.extend(hist_new.omega_1)
+    history.f_1.extend(hist_new.f_1)
+    history.freq_distance.extend(hist_new.freq_distance)
+    history.stop_reason = hist_new.stop_reason
 
 
 def _validate_boundary_conditions(structure: Structure):
@@ -148,3 +246,10 @@ def compute_forces(structure: Structure) -> np.ndarray | None:
     if u is None:
         return None
     return structure.spring_forces(u)
+
+
+def compute_max_stress(structure: Structure) -> float | None:
+    u = compute_displacement(structure)
+    if u is None:
+        return None
+    return structure.max_stress(u)

@@ -1,6 +1,7 @@
 """Dynamischer Topologieoptimierer – kombiniert statisches und eigenfrequenzbasiertes Kriterium."""
 from __future__ import annotations
 
+import networkx as nx
 import numpy as np
 from dataclasses import dataclass
 
@@ -19,6 +20,7 @@ class DynamicOptimizationHistory:
     omega_1:          list[float]  # erste Eigenkreisfrequenz [rad/s]
     f_1:              list[float]  # erste Eigenfrequenz [Hz]
     freq_distance:    list[float]  # |ω₁ - ω_erreger| pro Iteration
+    stop_reason:      str = ""
 
 
 class DynamicOptimizer(OptimizerBase):
@@ -29,16 +31,15 @@ class DynamicOptimizer(OptimizerBase):
     Kombinierter Score:    (1 - alpha) * statisch_norm + alpha * dynamisch_norm
 
     Knoten mit dem niedrigsten Score werden zuerst entfernt.
+    Symmetrie wird automatisch erkannt (wie im EnergyBasedOptimizer).
     """
 
     def __init__(
         self,
-        node_mass: float = 1.0,
         omega_excitation: float = 10.0,
         alpha: float = 0.5,
         remove_fraction: float = 0.05,
-        enforce_symmetry: bool = False,
-        nx: int | None = None,
+        node_mass: float = 1.0,
     ):
         if not (0.0 < remove_fraction < 1.0):
             raise ValueError("remove_fraction muss im Bereich (0, 1) liegen.")
@@ -46,60 +47,27 @@ class DynamicOptimizer(OptimizerBase):
             raise ValueError("alpha muss im Bereich [0, 1] liegen.")
         if node_mass <= 0.0:
             raise ValueError("node_mass muss größer als 0 sein.")
-        if enforce_symmetry and nx is None:
-            raise ValueError("nx muss angegeben werden, wenn enforce_symmetry=True gesetzt ist.")
 
-        self.node_mass = node_mass
         self.omega_excitation = omega_excitation
         self.alpha = alpha
         self.remove_fraction = remove_fraction
-        self.enforce_symmetry = enforce_symmetry
-        self.nx = nx
-
-    # Hilfsmethoden für Spiegelung (identische Logik wie im EnergyBasedOptimizer)
-
-    def _get_mirror_node(self, node_id: int) -> int:
-        if self.nx is None:
-            raise ValueError("nx muss für die Spiegelberechnung gesetzt sein.")
-        row = node_id // self.nx
-        col = node_id % self.nx
-        mirror_col = (self.nx - 1) - col
-        return row * self.nx + mirror_col
-
-    def _is_on_symmetry_line(self, node_id: int) -> bool:
-        if self.nx is None:
-            raise ValueError("nx muss für die Symmetrieprüfung gesetzt sein.")
-        col = node_id % self.nx
-        return col == (self.nx - 1) - col
+        self.node_mass = node_mass
+        self.mirror_map: dict[int, int] | None = None
 
     # Wichtigkeitsberechnung
 
     def _assemble_and_solve_eigen(self, structure: Structure) -> tuple[float, np.ndarray]:
-        """Stellt K und M auf, löst das Eigenwertproblem und gibt (omega_1, eigvec_1) zurück.
-
-        Es werden mehr Moden als benötigt angefordert, damit Mechanismus-Moden
-        (Regularisierungsartefakte mit λ ≈ 0) übersprungen werden können und
-        der erste echte Strukturmode gefunden wird.
-        """
+        """Stellt K und M auf, löst das Eigenwertproblem und gibt (omega_1, eigvec_1) zurück."""
         K = structure.assemble_K()
         M = assemble_M(structure, self.node_mass)
         fixed = structure.fixed_dofs()
-
-        # solve_eigenvalue filtert Mechanismus-Moden intern heraus;
-        # eigenvalues[0] ist der erste echte Strukturmode.
         eigenvalues, eigenvectors = solve_eigenvalue(K, M, fixed, n_modes=6)
-
         omega_1 = float(np.sqrt(max(0.0, float(eigenvalues[0]))))
         eigvec_1 = eigenvectors[:, 0]
         return omega_1, eigvec_1
 
     def _compute_dynamic_importance(self, structure: Structure, eigvec_1: np.ndarray) -> np.ndarray:
-        """Rayleigh-basierte Knotenwichtigkeit aus dem ersten Eigenmode.
-
-        importance[i] = (û₁[dof_x_i]² + û₁[dof_y_i]²) * m_i
-        wobei m_i die physikalische Knotenmasse ist (falls Material gesetzt),
-        andernfalls self.node_mass. Inaktive Knoten erhalten den Wert 0.
-        """
+        """Rayleigh-basierte Knotenwichtigkeit aus dem ersten Eigenmode."""
         M = assemble_M(structure, self.node_mass)
         importance = np.zeros(len(structure.nodes), dtype=float)
         for node in structure.nodes:
@@ -121,28 +89,17 @@ class DynamicOptimizer(OptimizerBase):
             return np.zeros(len(structure.nodes), dtype=float)
         return structure.node_importance_from_energy(u)
 
-    def _combined_score(
-        self,
-        static_imp: np.ndarray,
-        dynamic_imp: np.ndarray,
-    ) -> np.ndarray:
-        """Rang-normierter gewichteter Score aus statischer und dynamischer Wichtigkeit.
-
-        Verwendet Rangperzentile statt Max-Normierung, sodass beide Kriterien
-        unabhängig von ihrer Größenordnung gleich stark diskriminieren.
-
-        score[i] = (1 - alpha) * statisch_rang[i] + alpha * dynamisch_rang[i]
-        Niedriger Score → weniger wichtig → Kandidat zur Entfernung.
-        """
+    def _combined_score(self, static_imp: np.ndarray, dynamic_imp: np.ndarray) -> np.ndarray:
+        """Rang-normierter gewichteter Score aus statischer und dynamischer Wichtigkeit."""
         n = len(static_imp)
         if n == 0:
             return np.zeros(0)
         denom = max(n - 1, 1)
-        static_rank  = np.argsort(np.argsort(static_imp)).astype(float)  / denom
+        static_rank = np.argsort(np.argsort(static_imp)).astype(float) / denom
         dynamic_rank = np.argsort(np.argsort(dynamic_imp)).astype(float) / denom
         return (1.0 - self.alpha) * static_rank + self.alpha * dynamic_rank
 
-    # Kandidatenauswahl (analog zum EnergyBasedOptimizer)
+    # Kandidatenauswahl (mit auto-detect mirror_map, wie EnergyBasedOptimizer)
 
     def _select_candidates(
         self,
@@ -165,7 +122,7 @@ class DynamicOptimizer(OptimizerBase):
 
         removable_sorted = sorted(removable, key=lambda i: score[i])
 
-        if self.enforce_symmetry:
+        if self.mirror_map is not None:
             return self._select_symmetric(structure, removable_sorted, target_remove)
         return self._select_greedy(structure, removable_sorted, target_remove)
 
@@ -176,15 +133,24 @@ class DynamicOptimizer(OptimizerBase):
         target_remove: int,
     ) -> list[int]:
         selected: list[int] = []
-        exclude: set[int] = set()
+        G = structure.build_graph()
 
         for nid in removable_sorted:
             if len(selected) >= target_remove:
                 break
-            trial = exclude | {nid}
-            if structure.is_valid_topology(exclude_nodes=trial):
+            if nid not in G:
+                continue
+
+            neighbors = list(G.neighbors(nid))
+            G.remove_node(nid)
+
+            if G.number_of_nodes() > 1 and nx.is_connected(G):
                 selected.append(nid)
-                exclude = trial
+            else:
+                G.add_node(nid)
+                for nb in neighbors:
+                    if nb in G:
+                        G.add_edge(nid, nb)
 
         return selected
 
@@ -195,8 +161,26 @@ class DynamicOptimizer(OptimizerBase):
         target_remove: int,
     ) -> list[int]:
         selected: list[int] = []
-        exclude: set[int] = set()
         processed: set[int] = set()
+        assert self.mirror_map is not None
+        mm = self.mirror_map
+        removable_set = set(removable_sorted)
+        G = structure.build_graph()
+
+        def _try_remove(nids: list[int]) -> bool:
+            saved: dict[int, list[int]] = {}
+            for nid in nids:
+                if nid in G:
+                    saved[nid] = list(G.neighbors(nid))
+                    G.remove_node(nid)
+            valid = G.number_of_nodes() > 1 and nx.is_connected(G)
+            if not valid:
+                for nid, neighbors in saved.items():
+                    G.add_node(nid)
+                    for nb in neighbors:
+                        if nb in G:
+                            G.add_edge(nid, nb)
+            return valid
 
         for nid in removable_sorted:
             if len(selected) >= target_remove:
@@ -204,20 +188,19 @@ class DynamicOptimizer(OptimizerBase):
             if nid in processed:
                 continue
 
-            if self._is_on_symmetry_line(nid):
-                trial = exclude | {nid}
-                if structure.is_valid_topology(exclude_nodes=trial):
+            mirror_id = mm.get(nid)
+
+            if mirror_id is None or mirror_id == nid:
+                if _try_remove([nid]):
                     selected.append(nid)
-                    exclude = trial
                     processed.add(nid)
             else:
-                mirror_id = self._get_mirror_node(nid)
-                if mirror_id in removable_sorted and mirror_id not in exclude and mirror_id not in processed:
-                    trial = exclude | {nid, mirror_id}
-                    if structure.is_valid_topology(exclude_nodes=trial):
-                        selected.extend([nid, mirror_id])
-                        exclude = trial
-                        processed.update([nid, mirror_id])
+                if mirror_id in removable_set and mirror_id not in processed:
+                    if _try_remove([nid, mirror_id]):
+                        selected.append(nid)
+                        selected.append(mirror_id)
+                        processed.add(nid)
+                        processed.add(mirror_id)
 
         return selected
 
@@ -246,13 +229,50 @@ class DynamicOptimizer(OptimizerBase):
         fixed = structure.fixed_dofs()
         return solve(K, F, fixed)
 
+    def _exceeds_stress(self, structure: Structure, u: np.ndarray, max_stress: float | None) -> bool:
+        if max_stress is None:
+            return False
+        return structure.max_stress(u) > max_stress
+
+    def _try_stress_redistribution(
+        self,
+        structure: Structure,
+        u: np.ndarray,
+        blacklist: set[int],
+    ) -> bool:
+        protected = set(structure.protected_node_ids()) | blacklist
+        pair = structure.most_stressed_spring_nodes(u)
+        if pair is None:
+            return False
+
+        removable = [nid for nid in pair if nid not in protected]
+        if not removable:
+            return False
+
+        old_stress = structure.max_stress(u)
+        self._deactivate_nodes(structure, removable)
+        u_new = self._solve_structure(structure)
+
+        if u_new is not None and structure.max_stress(u_new) < old_stress:
+            return True
+
+        self._reactivate_nodes(structure, removable)
+        self._blacklist_with_mirror(removable, blacklist)
+        return False
+
+    def _blacklist_with_mirror(self, nids: list[int], blacklist: set[int]) -> None:
+        for nid in nids:
+            blacklist.add(nid)
+            if self.mirror_map and nid in self.mirror_map:
+                blacklist.add(self.mirror_map[nid])
+
     # Öffentliche Schnittstelle
 
     def step(self, structure: Structure) -> np.ndarray:
         """Führt eine Optimierungsiteration durch. Gibt den kombinierten Score zurück."""
         _, eigvec_1 = self._assemble_and_solve_eigen(structure)
         n = len(structure.nodes)
-        static_imp  = self._compute_static_importance(structure) if self.alpha < 1.0 else np.zeros(n)
+        static_imp = self._compute_static_importance(structure) if self.alpha < 1.0 else np.zeros(n)
         dynamic_imp = self._compute_dynamic_importance(structure, eigvec_1) if self.alpha > 0.0 else np.zeros(n)
         score = self._combined_score(static_imp, dynamic_imp)
 
@@ -265,6 +285,7 @@ class DynamicOptimizer(OptimizerBase):
         structure: Structure,
         target_mass_fraction: float,
         max_iters: int = 200,
+        max_stress: float | None = None,
         on_iter=None,
         force: bool = False,
     ) -> DynamicOptimizationHistory:
@@ -280,60 +301,106 @@ class DynamicOptimizer(OptimizerBase):
 
         structure._register_special_nodes()
 
+        # Auto-Symmetrie-Erkennung (wie im EnergyBasedOptimizer)
+        is_sym, mirror_map = structure.detect_symmetry()
+        if is_sym:
+            self.mirror_map = mirror_map
+
         if force:
-            # Erzwungener Modus: alle FEM-Sicherheitschecks deaktiviert
             for iter_idx in range(max_iters):
                 structure.remove_removable_nodes()
                 history.mass_fraction.append(structure.current_mass_fraction())
                 if structure.current_mass_fraction() <= target_mass_fraction:
+                    history.stop_reason = "Ziel-Massenanteil erreicht"
                     break
                 try:
                     omega_1, eigvec_1 = self._assemble_and_solve_eigen(structure)
                 except Exception:
+                    history.stop_reason = "Eigenwertberechnung fehlgeschlagen"
                     break
                 history.omega_1.append(omega_1)
                 history.f_1.append(omega_1 / (2.0 * np.pi))
                 history.freq_distance.append(abs(omega_1 - self.omega_excitation))
                 n = len(structure.nodes)
                 u = self._solve_structure(structure)
-                static_imp = structure.node_importance_from_energy(u) if u is not None and self.alpha < 1.0 else np.zeros(n)
-                dynamic_imp = self._compute_dynamic_importance(structure, eigvec_1) if self.alpha > 0.0 else np.zeros(n)
+                static_imp = (
+                    structure.node_importance_from_energy(u)
+                    if u is not None and self.alpha < 1.0
+                    else np.zeros(n)
+                )
+                dynamic_imp = (
+                    self._compute_dynamic_importance(structure, eigvec_1)
+                    if self.alpha > 0.0
+                    else np.zeros(n)
+                )
                 score = self._combined_score(static_imp, dynamic_imp)
                 candidates = self._select_candidates(structure, score, self.remove_fraction)
                 if not candidates:
+                    history.stop_reason = "Keine entfernbaren Knoten mehr"
                     break
                 self._deactivate_nodes(structure, candidates)
                 history.removed_per_iter.append(len(candidates))
                 if on_iter is not None:
                     on_iter(structure, iter_idx, omega_1, len(candidates))
+            else:
+                history.stop_reason = "Max. Iterationen erreicht"
             return history
 
+        # Pre-Check: Stress bereits über Limit?
+        u = self._solve_structure(structure)
+        if max_stress is not None:
+            if u is None:
+                history.stop_reason = "Struktur ist instabil"
+                return history
+            if structure.max_stress(u) > max_stress:
+                history.stop_reason = "Ausgangsspannung überschreitet bereits die Streckgrenze"
+                return history
+
         blacklist: set[int] = set()
+        needs_solve = u is None
 
         for iter_idx in range(max_iters):
             # 1. Nutzlose Knoten entfernen (Inseln / Sackgassen)
             removed_set = structure._find_removable_nodes()
             if removed_set:
                 structure.remove_removable_nodes()
+                needs_solve = True
 
             # 2. Zielmasse erreicht?
             history.mass_fraction.append(structure.current_mass_fraction())
             if structure.current_mass_fraction() <= target_mass_fraction:
+                history.stop_reason = "Ziel-Massenanteil erreicht"
                 break
 
-            # 3. Statischer Solver — Abbruch bei singulärer Matrix
-            u = self._solve_structure(structure)
-            if u is None:
-                if removed_set:
-                    self._reactivate_nodes(structure, list(removed_set))
-                    u = self._solve_structure(structure)
+            # 3. Statischer Solver
+            if needs_solve:
+                u = self._solve_structure(structure)
                 if u is None:
+                    if removed_set:
+                        self._reactivate_nodes(structure, list(removed_set))
+                        u = self._solve_structure(structure)
+                    if u is None:
+                        history.stop_reason = "Struktur ist instabil"
+                        break
+                needs_solve = False
+
+            # 3b. Stress-Check nach Solver
+            assert u is not None
+            if self._exceeds_stress(structure, u, max_stress):
+                assert max_stress is not None
+                if not self._try_stress_redistribution(structure, u, blacklist):
+                    history.stop_reason = "Streckgrenze erreicht"
+                    break
+                u = self._solve_structure(structure)
+                if u is None:
+                    history.stop_reason = "Struktur instabil nach Lastumverteilung"
                     break
 
-            # 4. Eigenwertproblem — Abbruch bei Fehler
+            # 4. Eigenwertproblem
             try:
                 omega_1, eigvec_1 = self._assemble_and_solve_eigen(structure)
             except Exception:
+                history.stop_reason = "Eigenwertberechnung fehlgeschlagen"
                 break
             history.omega_1.append(omega_1)
             history.f_1.append(omega_1 / (2.0 * np.pi))
@@ -341,13 +408,14 @@ class DynamicOptimizer(OptimizerBase):
 
             # 5. Kombinierter Wichtigkeitsscore
             n = len(structure.nodes)
-            static_imp  = structure.node_importance_from_energy(u) if self.alpha < 1.0 else np.zeros(n)
+            static_imp = structure.node_importance_from_energy(u) if self.alpha < 1.0 else np.zeros(n)
             dynamic_imp = self._compute_dynamic_importance(structure, eigvec_1) if self.alpha > 0.0 else np.zeros(n)
             score = self._combined_score(static_imp, dynamic_imp)
 
             # 6. Kandidaten auswählen (mit Blacklist)
             candidates = self._select_candidates(structure, score, self.remove_fraction, blacklist)
             if not candidates:
+                history.stop_reason = "Keine entfernbaren Knoten mehr"
                 break
 
             # 7. Alle Kandidaten auf einmal entfernen — check ob noch lösbar
@@ -355,28 +423,56 @@ class DynamicOptimizer(OptimizerBase):
             u_check = self._solve_structure(structure)
 
             if u_check is not None:
+                if self._exceeds_stress(structure, u_check, max_stress):
+                    self._reactivate_nodes(structure, candidates)
+                    history.stop_reason = "Streckgrenze erreicht"
+                    break
+                u = u_check
+                needs_solve = False
                 history.removed_per_iter.append(len(candidates))
                 if on_iter is not None:
                     on_iter(structure, iter_idx, omega_1, len(candidates))
                 continue
 
-            # 8. Batch fehlgeschlagen — einzeln versuchen
+            # 8. Batch fehlgeschlagen — gruppiert versuchen (Mirror-Paare)
             self._reactivate_nodes(structure, candidates)
-            actually_removed: list[int] = []
+
+            seen: set[int] = set()
+            groups: list[list[int]] = []
+            candidate_set = set(candidates)
             for nid in candidates:
-                self._deactivate_nodes(structure, [nid])
-                u_single = self._solve_structure(structure)
-                if u_single is None:
-                    self._reactivate_nodes(structure, [nid])
-                    blacklist.add(nid)
+                if nid in seen:
+                    continue
+                mid = self.mirror_map.get(nid) if self.mirror_map else None
+                if mid is not None and mid != nid and mid in candidate_set and mid not in seen:
+                    groups.append([nid, mid])
+                    seen.update([nid, mid])
                 else:
-                    actually_removed.append(nid)
+                    groups.append([nid])
+                    seen.add(nid)
+
+            actually_removed: list[int] = []
+            for group in groups:
+                self._deactivate_nodes(structure, group)
+                u_test = self._solve_structure(structure)
+
+                if u_test is None or self._exceeds_stress(structure, u_test, max_stress):
+                    self._reactivate_nodes(structure, group)
+                    self._blacklist_with_mirror(group, blacklist)
+                else:
+                    u = u_test
+                    actually_removed.extend(group)
 
             if not actually_removed:
+                history.stop_reason = "Keine weitere Optimierung möglich"
                 break
 
+            needs_solve = False
             history.removed_per_iter.append(len(actually_removed))
             if on_iter is not None:
                 on_iter(structure, iter_idx, omega_1, len(actually_removed))
+
+        else:
+            history.stop_reason = "Max. Iterationen erreicht"
 
         return history

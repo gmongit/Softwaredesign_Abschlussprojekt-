@@ -5,7 +5,7 @@ import streamlit as st
 from PIL import Image
 
 from core.db.case_store import case_store
-from app.shared import png_save_dialog, structure_save_dialog, PNG_EXPORT_SETTINGS, show_structure_status
+from app.shared import show_structure_status, show_export_buttons
 from app.service.optimization_service import validate_structure
 from app.service.structure_service import (
     create_rectangular_grid,
@@ -251,12 +251,6 @@ if orig is not None:
 
     # Export-Buttons
     active_name = st.session_state.get("case_name_main") or "struktur"
-    col_png, col_save = st.columns(2)
-    with col_png:
-        if st.button("📥 Als PNG speichern", width='stretch'):
-            png_save_dialog(fig.to_image(**PNG_EXPORT_SETTINGS), active_name)
-    with col_save:
-        if st.button("💾 Struktur speichern", width='stretch'):
-            structure_save_dialog(active_name)
+    show_export_buttons(fig, active_name)
 else:
     st.info("Erstelle eine Struktur oder lade einen gespeicherten Case.")

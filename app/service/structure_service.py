@@ -116,7 +116,9 @@ def create_structure_from_image(
     for row in range(ny):
         for col in range(nx):
             if not grid[row, col]:
-                nid = row * nx + col
+                # Bildzeile 0 = oben im Bild → Strukturzeile ny-1 = oben (y=height)
+                struct_row = ny - 1 - row
+                nid = struct_row * nx + col
                 structure.nodes[nid].active = False
                 inactive.add(nid)
 

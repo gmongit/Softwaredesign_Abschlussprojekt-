@@ -9,6 +9,10 @@ from core.model.structure import Structure
 
 
 def _base_layout() -> dict:
+    """
+    Erzeugt das Standard-Layout für alle Plotly-Strukturplots.
+    Stellt ein einheitliches dunkles Design mit fixierter Achsenskalierung sicher.
+    """
     return dict(
         paper_bgcolor="#1A1A2E",
         plot_bgcolor="#16213E",
@@ -21,6 +25,10 @@ def _base_layout() -> dict:
 
 
 def _node_traces(structure: Structure):
+    """
+    Erstellt die Plot-Daten für alle aktiven Knoten einer Struktur.
+    Weist je nach Lagerung oder Last passende Farben, Symbole und Hover-Informationen zu.
+    """
     nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = [], [], [], [], [], [], []
     for n in structure.nodes:
         if not n.active:
@@ -54,6 +62,10 @@ def _node_traces(structure: Structure):
 
 
 def _inactive_node_trace(structure: Structure):
+    """
+    Erstellt die Plot-Daten für alle inaktiven Knoten der Struktur.
+    Dient zur separaten Visualisierung entfernter bzw. deaktivierter Knoten.
+    """
     ix, iy, ids, hover = [], [], [], []
     for n in structure.nodes:
         if n.active:
@@ -66,6 +78,10 @@ def _inactive_node_trace(structure: Structure):
 
 
 def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figure:
+    """
+    Visualisiert die aktuelle Struktur mit allen aktiven Stäben und Knoten.
+    Optional können auch inaktive Knoten zur Analyse angezeigt werden.
+    """
     sx, sy = [], []
     for s in structure.springs:
         if not s.active:
@@ -120,6 +136,10 @@ def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figu
 
 
 def plot_heatmap(structure: Structure, energies=None) -> go.Figure:
+    """
+    Visualisiert die Struktur als Heatmap, wobei die Stabfarbe der gespeicherten Energie entspricht.
+    Höhere Energien werden farblich hervorgehoben und ermöglichen die Identifikation stark belasteter Bereiche.
+    """
     fig = go.Figure()
 
     e_max = max(energies) if energies is not None and max(energies) > 0 else 1.0
@@ -167,11 +187,15 @@ def plot_heatmap(structure: Structure, energies=None) -> go.Figure:
 
 def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figure:
     fig = go.Figure()
+    """
+    Visualisiert die unverformte und die verformte Struktur basierend auf dem Verschiebungsvektor u.
+    Die Verformung wird mit `scale` skaliert und optional über `u_ref` (Clipping) gegen Ausreißer begrenzt.
+    """
 
     # Ausreißer clippen: max. 3x die Referenzverschiebung erlaubt
     clip = 3.0 * u_ref if u_ref is not None and u_ref > 0 else None
 
-    # --- Unverformte Struktur (grau, dünn) als Referenz ---
+    # Unverformte Struktur (grau, dünn) als Referenz
     sx_orig, sy_orig = [], []
     for s in structure.springs:
         if not s.active:
@@ -192,7 +216,7 @@ def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figu
         name="Unverformt",
     ))
 
-    # --- Verformte Struktur (rot) ---
+    #  Verformte Struktur (rot)
     sx_def, sy_def = [], []
     for s in structure.springs:
         if not s.active:
@@ -247,10 +271,14 @@ def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figu
 
 
 def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> go.Figure:
+    """
+    Visualisiert den Optimierungsverlauf mit aktiven, bereits entfernten und aktuell entfernten Elementen.
+    Dient zur schrittweisen Darstellung des Materialabbaus während der Topologie-Optimierung.
+    """
     fig = go.Figure()
     all_removed = removed_so_far | just_removed
 
-    # --- Bereits entfernte Federn (sehr blass) ---
+    # Bereits entfernte Federn (sehr blass) 
     sx_gone, sy_gone = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -266,7 +294,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # --- Aktive Federn ---
+    # Aktive Federn 
     sx_act, sy_act = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -282,7 +310,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # --- Gerade entfernte Federn (orange) ---
+    # Gerade entfernte Federn (orange)
     sx_rem, sy_rem = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -299,7 +327,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # --- Gerade entfernte Knoten (orange X) ---
+    # Gerade entfernte Knoten (orange X) 
     rem_nodes = [structure.nodes[nid] for nid in just_removed]
     if rem_nodes:
         fig.add_trace(go.Scatter(
@@ -324,6 +352,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
 
 
 def generate_mode_animation_gif(
+        
     structure,
     eigvec: np.ndarray,
     scale: float,
@@ -378,6 +407,7 @@ def generate_mode_animation_gif(
 
 
 def generate_replay_gif(
+    
     structure,
     hist,
     fps: int = 5,
@@ -387,6 +417,10 @@ def generate_replay_gif(
 ) -> bytes:
     n_steps = len(hist.removed_nodes_per_iter)
     total_frames = n_steps + 1  # +1 for initial frame
+    """
+    Erzeugt ein GIF des Optimierungsverlaufs, indem jede Iteration als Frame dargestellt wird.
+    Der finale Zustand wird für einige Sekunden gehalten, um das Endergebnis deutlich zu zeigen.
+    """
 
     all_x = [n.x for n in structure.nodes]
     all_y = [n.y for n in structure.nodes]
@@ -436,7 +470,7 @@ def generate_replay_gif(
 def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=80):
     """
     Lastpfade als Pfeile entlang der Stäbe.
-    Pfeillänge ~ energies[i] (gleiches Mapping wie Heatmap: Feder i -> energies[i]).
+    Pfeillänge (gleiches Mapping wie Heatmap: Feder i -> energies[i]).
     Richtung entlang Stab; Zug/Druck-Vorzeichen wird aus u über dL bestimmt.
     """
 

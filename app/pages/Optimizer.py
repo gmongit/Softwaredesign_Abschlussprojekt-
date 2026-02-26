@@ -158,7 +158,16 @@ if st.session_state.history is not None:
             st.warning("Lastpfade nicht berechenbar – optimierte Struktur ist singulär.")
         else:
             arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
-            show_top = st.slider("Top-Stäbe anzeigen", 10, 500, 80, 10)
+        
+            n_springs = len(st.session_state.structure.springs)
+
+            show_top = st.slider(
+                "Top-Stäbe anzeigen",
+                min_value=1,
+                max_value=n_springs,
+                value=min(80, n_springs),
+                step=1
+            )
 
             fig = plot_load_paths_with_arrows(
                 st.session_state.structure,

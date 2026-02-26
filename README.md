@@ -9,7 +9,8 @@ Eine interaktive Web-App zur Topologie-Optimierung von Stabwerken, entwickelt mi
 Das Programm beantwortet die Frage:  
 **„Welche Stäbe eines Tragwerks kann ich entfernen, ohne dass es versagt – bei minimalem Materialeinsatz?"**
 
-Ausgangspunkt ist ein rechteckiges Federgitter (Stabwerk). Der Nutzer definiert die Geometrie, die Lagerung und die Last. Ein energiebasierter Optimierungsalgorithmus entfernt dann schrittweise die am wenigsten belasteten Knoten, bis ein gewünschter Massenanteil erreicht ist.
+Ausgangspunkt ist ein rechteckiges 2D-Stabgitter.
+Ein energie­basierter Optimierungsalgorithmus entfernt iterativ schwach belastete Elemente, bis ein gewünschter Massenanteil erreicht ist.
 
 ---
 
@@ -23,7 +24,7 @@ Ausgangspunkt ist ein rechteckiges Federgitter (Stabwerk). Der Nutzer definiert 
 
 ```bash
 # Repository klonen
-git clone https://github.com/dein-repo/topologie-optimierung.git
+git clone https://github.com/gmongit/Softwaredesign_Abschlussprojekt-.git
 cd Softwaredesign_Abschlussprojekt-
 
 
@@ -41,29 +42,32 @@ streamlit run app/main.py
 
 ---
 
-## 🗂️ Programmaufbau
+## Physikalisches Modell
 
-```
-app/
-  main.py               # Einstiegspunkt & Navigation
-  heatmap.py            # Visualisierung der Federenergien
-  pages/
-    Material_Manager.py # Materialverwaltung
-    Structure_Creator.py # Strukturdefinition
-    Optimizer.py        # Optimierung & Ergebnisanzeige
-core/
-  model/
-    node.py             # Knotenmodell
-    spring.py           # Federmodell
-    structure.py        # Gesamtstruktur
-  solver/
-    solver.py           # Linearer Gleichungssystem-Löser
-  optimization/
-    energy_based_optimizer.py  # Optimierungsalgorithmus
-    connectivity_check.py      # Konnektivitätsprüfung
-```
+Das Tragwerk wird als lineares 2D-Stabwerk modelliert:
 
----
+- 2 Freiheitsgrade pro Knoten (ux, uy)
+- Lineare Elastizität (Hooke)
+- Kleine Verformungen
+- Axiale Stäbe (keine Biegung)
+
+## ⚙️ Berechnungsschritte
+
+1. **Aufstellen der globalen Steifigkeitsmatrix**  
+   `K = Σ k_e`
+
+2. **Lösung des linearen Gleichungssystems**  
+   `K · u = F`
+
+3. **Berechnung der Stabenergie**  
+   `E_e = ½ · k_e · (ΔL)²`
+
+4. **Entfernen von Elementen mit geringer Energie**  
+   Knoten mit dem geringsten Energieanteil werden schrittweise entfernt
+
+5. **Konnektivitätsprüfung**  
+   Sicherstellen, dass Last und Auflager weiterhin verbunden sind
+
 
 ## 📋 Benutzungsanleitung
 

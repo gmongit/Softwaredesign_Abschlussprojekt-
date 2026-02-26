@@ -74,29 +74,6 @@ Das Tragwerk wird als lineares 2D-Stabwerk modelliert:
    → Sicherstellen, dass Last und Auflager weiterhin verbunden sind
 
 
-## 🗂️ Programmaufbau
-
-```
-app/
-  main.py               # Einstiegspunkt & Navigation
-  heatmap.py            # Visualisierung der Federenergien
-  pages/
-    Material_Manager.py # Materialverwaltung
-    Structure_Creator.py # Strukturdefinition
-    Optimizer.py        # Optimierung & Ergebnisanzeige
-core/
-  model/
-    node.py             # Knotenmodell
-    spring.py           # Federmodell
-    structure.py        # Gesamtstruktur
-  solver/
-    solver.py           # Linearer Gleichungssystem-Löser
-  optimization/
-    energy_based_optimizer.py  # Optimierungsalgorithmus
-    connectivity_check.py      # Konnektivitätsprüfung
-```
-
----
 
 ## 📋 Benutzungsanleitung
 

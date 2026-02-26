@@ -1,6 +1,6 @@
 # 🔧 Topologie-Optimierung – Stabwerk-Analyse
 
-Eine interaktive Web-App zur Topologie-Optimierung von Stabwerken, entwickelt mit Python und Streamlit.
+Eine interaktive Web-App zur Topologie-Optimierung von 2D-Fachwerk-Strukturen, entwickelt mit Python und Streamlit.
 
 ---
 
@@ -9,8 +9,7 @@ Eine interaktive Web-App zur Topologie-Optimierung von Stabwerken, entwickelt mi
 Das Programm beantwortet die Frage:  
 **„Welche Stäbe eines Tragwerks kann ich entfernen, ohne dass es versagt – bei minimalem Materialeinsatz?"**
 
-Ausgangspunkt ist ein rechteckiges 2D-Stabgitter.
-Ein energie­basierter Optimierungsalgorithmus entfernt iterativ schwach belastete Elemente, bis ein gewünschter Massenanteil erreicht ist.
+Ausgangspunkt ist ein rechteckiges Federgitter (Stabwerk). Der Nutzer definiert die Geometrie, die Lagerung und die Last. Ein energiebasierter Optimierungsalgorithmus entfernt dann schrittweise die am wenigsten belasteten Knoten, bis ein gewünschter Massenanteil erreicht ist.
 
 ---
 
@@ -24,9 +23,8 @@ Ein energie­basierter Optimierungsalgorithmus entfernt iterativ schwach belaste
 
 ```bash
 # Repository klonen
-git clone https://github.com/gmongit/Softwaredesign_Abschlussprojekt-.git
-cd Softwaredesign_Abschlussprojekt-
-
+git clone https://github.com/dein-repo/topologie-optimierung.git
+cd topologie-optimierung
 
 # Virtuelle Umgebung erstellen und aktivieren
 python -m venv .venv
@@ -42,77 +40,111 @@ streamlit run app/main.py
 
 ---
 
-## Physikalisches Modell
+## 🗂️ Projektstruktur
 
-Das Tragwerk wird als lineares 2D-Stabwerk modelliert:
+```
+app/
+  main.py                        # Einstiegspunkt & Navigation
+  plots.py                       # Gemeinsame Plotly-Visualisierungen
+  shared.py                      # Gemeinsame UI-Komponenten
+  pages/
+    Material_Manager.py          # Materialverwaltung
+    Structure_Creator.py         # Strukturdefinition & Bearbeitung
+    Optimizer.py                 # Statische Optimierung
+    Dynamic_Optimizer.py         # Dynamische Optimierung
+  service/
+    optimization_service.py      # Optimierungslogik
+    structure_service.py         # Strukturlogik
 
-- 2 Freiheitsgrade pro Knoten (ux, uy)
-- Lineare Elastizität (Hooke)
-- Kleine Verformungen
-- Axiale Stäbe (keine Biegung)
+core/
+  model/
+    node.py                      # Knotenmodell
+    spring.py                    # Federmodell
+    structure.py                 # Gesamtstruktur
+    boundary_conditions.py       # Randbedingungen
+  optimization/
+    optimizer_base.py            # Abstrakte Basisklasse
+    energy_based_optimizer.py    # Statischer Optimizer
+    dynamic_optimizer.py         # Dynamischer Optimizer
+  solver/
+    solver.py                    # Hauptsolver
+    stiffness_matrix.py          # Steifigkeitsmatrix
+    mass_matrix.py               # Massenmatrix
+    eigenvalue_solver.py         # Eigenwertlöser
+    regularization.py            # Regularisierung
+```
 
-## ⚙️ Berechnungsschritte
-
-1. **Aufstellen der globalen Steifigkeitsmatrix**  
-   `K = Σ k_e`
-
-2. **Lösung des linearen Gleichungssystems**  
-   `K · u = F`
-
-3. **Berechnung der Stabenergie**  
-   `E_e = ½ · k_e · (ΔL)²`
-
-4. **Entfernen von Elementen mit geringer Energie**  
-   Knoten mit dem geringsten Energieanteil werden schrittweise entfernt
-
-5. **Konnektivitätsprüfung**  
-   Sicherstellen, dass Last und Auflager weiterhin verbunden sind
-
+---
 
 ## 📋 Benutzungsanleitung
 
 ### Schritt 1 – Material Manager
-- Werkstoffe definieren (E-Modul, Streckgrenze, Dichte)
-- Gespeicherte Materialien können im Structure Creator verwendet werden
+Materialien mit Name, E-Modul (GPa), Streckgrenze (MPa) und Dichte (kg/m³) anlegen, bearbeiten und löschen. Die Daten werden persistent in einer TinyDB-Datenbank gespeichert und dienen als Grundlage für die physikalisch korrekte Berechnung der Federsteifigkeiten und Stabmassen.
 
 ### Schritt 2 – Strukturdefinition
-- **Breite & Höhe** des Gitters in Metern eingeben
-- **Anzahl der Knoten** in X- und Y-Richtung festlegen (nx, ny)
-- **Last Fy** in Newton eingeben (negativer Wert = nach unten)
-- Auf **„Struktur erstellen"** klicken
-- Die Struktur wird als Einfeldträger erstellt:
-  - Loslager unten links (fix Y)
-  - Festlager unten rechts (fix X & Y)
-  - Last oben Mitte
+Strukturen können auf drei Wegen erstellt werden:
+- **Manuell** – Rechteckgitter mit wählbarer Auflösung (nx, ny) und Abmessungen
+- **Laden** – gespeicherte Cases aus der Datenbank laden
+- **Bild hochladen** – Foto (PNG/JPG/BMP/WebP) wird automatisch in eine Gitterstruktur konvertiert
+
+Nach dem Erstellen kann die Struktur interaktiv bearbeitet werden: Knoten ein-/ausschalten, Festlager, Loslager und Lasten per Klick auf beliebige Knoten setzen.
 
 ### Schritt 3 – Optimierung
 - **Ziel-Massenanteil** einstellen (z.B. 0.4 = 40% des Materials bleibt übrig)
-- **Entfernungsrate** pro Iteration einstellen
-- **Max. Iterationen** festlegen
+- **Entfernungsrate** und **Max. Iterationen** festlegen
+- **Material und Sicherheitsfaktor** wählen
 - Auf **„Optimierung starten"** klicken
-- Das Ergebnis wird als interaktiver Plot angezeigt
 
-### Ansichten nach der Optimierung
+### Schritt 4 – Ergebnis analysieren
+
 | Ansicht | Beschreibung |
 |---|---|
-| **Struktur** | Optimiertes Stabwerk |
+| **Struktur** | Optimiertes Stabwerk mit Randbedingungen |
 | **Heatmap** | Federenergien – rot = stark belastet, blau = gering belastet |
 | **Lastpfade** | Kraftfluss von der Last zu den Auflagern |
+| **Verformung** | Unverformte Referenz + verformte Struktur (skalierbar) |
+| **Replay** | Schritt-für-Schritt Animation der Optimierung |
 
 ---
 
-## ⚙️ Wie funktioniert der Algorithmus?
+## ⚙️ Berechnungsschritte
 
-1. **Steifigkeitsmatrix** K wird aufgestellt
-2. Lineares Gleichungssystem **K · u = F** wird gelöst → Verschiebungen u
-3. Für jede Feder wird die **Formänderungsenergie** berechnet
-4. Knoten mit geringer Energie (= wenig zur Lastübertragung beitragend) werden entfernt
-5. Nach jeder Entfernung wird geprüft ob die Struktur noch **zusammenhängend** ist und die Last die Auflager erreicht
-6. Wiederholen bis Ziel-Massenanteil erreicht
+1. **Aufstellen der globalen Steifigkeitsmatrix**  
+   `K = Σ k_e` mit `k_e = E · A / L`
+
+2. **Lösung des linearen Gleichungssystems**  
+   `K · u = F`
+
+3. **Berechnung der Formänderungsenergie pro Stab**  
+   `E_e = ½ · k_e · (Δu)²`
+
+4. **Entfernen von Knoten mit geringer Energie**  
+   Knoten mit dem geringsten Energieanteil werden schrittweise entfernt. Symmetrische Knotenpaare werden gemeinsam entfernt.
+
+5. **Spannungsconstraint**  
+   Wird die Streckgrenze (× Sicherheitsfaktor) überschritten, stoppt die Entfernung.
+
+6. **Konnektivitätsprüfung**  
+   In jedem Schritt wird sichergestellt, dass Last und Auflager weiterhin verbunden sind.
+
+---
+
+## 🔄 Dynamische Optimierung
+
+Zusätzlich zur statischen Optimierung bietet der **Dynamic Optimizer** eine eigenfrequenzbasierte Optimierung. Über einen Alpha-Parameter lässt sich stufenlos zwischen statischem und dynamischem Kriterium wechseln. Ziel ist die Vermeidung von Resonanz – die Eigenfrequenz der Struktur soll möglichst weit von einer vorgegebenen Anregungsfrequenz entfernt bleiben.
+
+---
+
+## 💾 Export
+
+- **PNG** – jede Ansicht kann als Bild gespeichert werden
+- **GIF** – Replay-Animation und Eigenmodus-Oszillation
+- **Case speichern** – komplette Struktur inkl. Optimierungshistorie in die Datenbank
 
 ---
 
 ## 👥 Entwickelt von
 
 MCI – Semester 3, Softwaredesign  
+gmongit · Christian Jäschke · nsextro-code 
 Studienjahr 2025/2026

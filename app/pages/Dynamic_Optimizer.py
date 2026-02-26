@@ -6,12 +6,18 @@ import plotly.graph_objects as go
 
 import numpy as np
 
-from core.optimization.dynamic_optimizer import DynamicOptimizer
 from core.solver.eigenvalue_solver import solve_eigenvalue
 from core.solver.mass_matrix import assemble_M
-from app.plots import plot_structure, plot_heatmap, plot_deformed_structure, plot_load_paths_with_arrows, generate_mode_animation_gif
-from app.service.optimization_service import prepare_structure, compute_displacement, compute_forces
-from core.db.material_store import material_store
+from app.plots import plot_structure, plot_deformed_structure, generate_mode_animation_gif
+from app.service.optimization_service import (
+    prepare_structure, validate_structure,
+    run_dynamic_optimization, continue_dynamic_optimization, is_retryable,
+)
+from app.shared import (
+    material_sidebar, show_structure_status, show_stop_reason,
+    show_heatmap_view, show_loadpaths_view, show_deformation_view,
+    make_dynamic_progress_callback,
+)
 
 # Guard
 if st.session_state.get("structure") is None:
@@ -28,29 +34,11 @@ _live_ph     = st.empty()
 with st.sidebar:
     st.header("Einstellungen")
 
-    # Material
     st.subheader("Material")
-    beam_diameter_mm = st.number_input("Balkendurchmesser (mm)", 10, 1000, 120, 10)
-    beam_area_mm2 = beam_diameter_mm ** 2 * math.pi / 4
-    st.caption(f"Querschnittsfläche: {beam_area_mm2:.1f} mm²")
-
-    materials = material_store.list_materials()
-    if materials:
-        selected_material = st.selectbox("Material", [m.name for m in materials])
-        mat = next(m for m in materials if m.name == selected_material)
-        st.caption(f"E-Modul: {mat.e_modul} GPa  |  Dichte: {mat.dichte} kg/m³")
-    else:
-        st.caption("⚠️ Kein Material vorhanden. Bitte zuerst im Material Manager anlegen.")
-        selected_material = None
-        mat = None
+    selected_material, mat, beam_area_mm2, max_stress_pa = material_sidebar()
 
     # Dynamik
     st.subheader("Dynamik")
-    node_mass = st.number_input(
-        "Knotenmasse [kg]",
-        min_value=0.01, max_value=100.0, value=1.0, step=0.1,
-        help="Fallback-Masse pro Knoten wenn kein Material gesetzt ist.",
-    )
 
     omega_excitation = st.number_input(
         "Erregerkreisfrequenz ω_E [rad/s]",
@@ -63,46 +51,33 @@ with st.sidebar:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    has_nx = st.session_state.get("nx") is not None
-    use_symmetry = st.toggle("Symmetrie erzwingen", value=has_nx, disabled=not has_nx)
-    if not has_nx:
-        st.caption("Symmetrie nur bei bekanntem Raster (nx) verfügbar.")
-
     target_mass     = st.slider("Ziel-Massenanteil", 0.1, 1.0, 0.4, 0.01)
     remove_fraction = st.slider("Entfernungsrate / Iteration", 0.01, 0.2, 0.05, 0.01)
     max_iters       = st.number_input("Max. Iterationen", 10, 500, 120, 10)
 
-    if st.button("▶ Dynamische Optimierung starten", type="primary"):
+    _omega_excitation = float(omega_excitation)
+    _alpha            = float(alpha)
+    _remove_fraction  = float(remove_fraction)
+    _target_mass      = float(target_mass)
+    _max_iters        = int(max_iters)
+
+    validation = validate_structure(st.session_state.structure)
+    show_structure_status(validation)
+
+    if st.button("▶ Dynamische Optimierung starten", type="primary", disabled=not validation.ok):
         try:
             structure_copy = copy.deepcopy(st.session_state.structure)
-            if selected_material is not None:
-                prepare_structure(structure_copy, selected_material, beam_area_mm2)
-            opt = DynamicOptimizer(
-                node_mass=float(node_mass),
-                omega_excitation=float(omega_excitation),
-                alpha=float(alpha),
-                remove_fraction=float(remove_fraction),
-                enforce_symmetry=use_symmetry,
-                nx=st.session_state.get("nx") if use_symmetry else None,
-            )
+            prepare_structure(structure_copy, selected_material, beam_area_mm2)
 
-            _target = float(target_mass)
-
-            def _on_iter(struct, i, om1, n_rem):
-                frac = struct.current_mass_fraction()
-                prog = max(0.0, min(1.0, (1.0 - frac) / max(1.0 - _target, 1e-9)))
-                _progress_ph.progress(
-                    prog,
-                    text=f"Iteration {i} | Masse: {frac:.1%} | ω₁ = {om1:.0f} rad/s | -{n_rem} Knoten",
-                )
-                with _live_ph.container():
-                    st.plotly_chart(plot_structure(struct), use_container_width=True, key=f"_live_{i}")
-
-            hist = opt.run(
+            hist = run_dynamic_optimization(
                 structure_copy,
-                target_mass_fraction=_target,
-                max_iters=int(max_iters),
-                on_iter=_on_iter,
+                omega_excitation=_omega_excitation,
+                alpha=_alpha,
+                remove_fraction=_remove_fraction,
+                target_mass_fraction=_target_mass,
+                max_iters=_max_iters,
+                max_stress=max_stress_pa,
+                on_iter=make_dynamic_progress_callback(_progress_ph, _live_ph, _target_mass, "_live"),
             )
         except ValueError as e:
             st.error(str(e))
@@ -111,9 +86,10 @@ with st.sidebar:
             _live_ph.empty()
             st.session_state.dyn_history   = hist
             st.session_state.dyn_structure = structure_copy
-            st.session_state.dyn_omega_e   = float(omega_excitation)
+            st.session_state.dyn_omega_e   = _omega_excitation
             st.session_state.mode_gif_bytes = None
-            mode = "symmetrisch" if use_symmetry else "normal"
+            is_sym, _ = structure_copy.detect_symmetry()
+            mode = "symmetrisch" if is_sym else "normal"
             st.success(
                 f"✅ Fertig ({mode})! "
                 f"Masse: {structure_copy.current_mass_fraction():.1%}  |  "
@@ -123,47 +99,59 @@ with st.sidebar:
                 f"✅ Fertig ({mode})! Masse: {structure_copy.current_mass_fraction():.1%}"
             )
 
-    # Warnung + Force-Button wenn Optimierung zu früh gestoppt wurde
+    # Retry-Button wenn stop_reason nicht terminal
+    dyn_hist = st.session_state.get("dyn_history")
+    if dyn_hist is not None and is_retryable(dyn_hist):
+        if st.button("🔄 Weiter optimieren"):
+            try:
+                continue_dynamic_optimization(
+                    st.session_state.dyn_structure, dyn_hist,
+                    omega_excitation=_omega_excitation,
+                    alpha=_alpha,
+                    remove_fraction=_remove_fraction,
+                    target_mass_fraction=_target_mass,
+                    max_iters=_max_iters,
+                    max_stress=max_stress_pa,
+                    on_iter=make_dynamic_progress_callback(_progress_ph, _live_ph, _target_mass, "_retry"),
+                )
+                _progress_ph.empty()
+                _live_ph.empty()
+                st.session_state.mode_gif_bytes = None
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+
+    # Force-Button wenn Optimierung zu früh gestoppt wurde
     dyn_struct = st.session_state.get("dyn_structure")
     if (dyn_struct is not None
-            and dyn_struct.current_mass_fraction() > float(target_mass) + 0.01):
-        mf_now = dyn_struct.current_mass_fraction()
-        st.warning(
-            f"Gestoppt bei **{mf_now:.1%}** – weitere Entfernung würde die Struktur singulär machen."
-        )
-        if st.button("⚠️ Trotzdem bis zur Zielmasse entfernen", type="secondary"):
-            _target_f = float(target_mass)
-
-            def _on_iter_force(struct, i, om1, n_rem):
-                frac = struct.current_mass_fraction()
-                prog = max(0.0, min(1.0, (1.0 - frac) / max(1.0 - _target_f, 1e-9)))
-                _progress_ph.progress(prog, text=f"Iteration {i} | Masse: {frac:.1%} | ω₁ = {om1:.0f} rad/s | -{n_rem} Knoten")
-                with _live_ph.container():
-                    st.plotly_chart(plot_structure(struct), use_container_width=True, key=f"_force_{i}")
-
+            and dyn_struct.current_mass_fraction() > _target_mass + 0.01):
+        if st.button("⚠️ Trotzdem bis zur Zielmasse entfernen - Nur für Testzwecke!", type="secondary"):
             try:
-                opt_force = DynamicOptimizer(
-                    node_mass=float(node_mass),
-                    omega_excitation=float(omega_excitation),
-                    alpha=float(alpha),
-                    remove_fraction=float(remove_fraction),
-                    enforce_symmetry=use_symmetry,
-                    nx=st.session_state.get("nx") if use_symmetry else None,
-                )
-                hist_force = opt_force.run(
+                hist_force = run_dynamic_optimization(
                     dyn_struct,
-                    target_mass_fraction=_target_f,
-                    max_iters=int(max_iters),
-                    on_iter=_on_iter_force,
+                    omega_excitation=_omega_excitation,
+                    alpha=_alpha,
+                    remove_fraction=_remove_fraction,
+                    target_mass_fraction=_target_mass,
+                    max_iters=_max_iters,
+                    on_iter=make_dynamic_progress_callback(_progress_ph, _live_ph, _target_mass, "_force"),
                     force=True,
                 )
                 _progress_ph.empty()
                 _live_ph.empty()
                 st.session_state.dyn_history = hist_force
+                st.session_state.mode_gif_bytes = None
                 mf = dyn_struct.current_mass_fraction()
                 st.success(f"✅ Fertig (erzwungen)! Masse: {mf:.1%}")
             except ValueError as e:
                 st.error(str(e))
+
+# --- Status ---
+dyn_hist_status = st.session_state.get("dyn_history")
+if dyn_hist_status is not None and dyn_hist_status.stop_reason:
+    dyn_struct_status = st.session_state.get("dyn_structure")
+    mf = dyn_struct_status.current_mass_fraction() if dyn_struct_status else 0.0
+    show_stop_reason(dyn_hist_status.stop_reason, mf)
 
 # Visualisierung
 if st.session_state.get("dyn_history") is None:
@@ -188,58 +176,20 @@ with tab1:
 
     if view == "Struktur":
         fig = plot_structure(structure)
-        st.plotly_chart(fig, use_container_width=True, key="tab_struktur")
+        st.plotly_chart(fig, width='stretch', key="tab_struktur")
 
     elif view == "Heatmap":
-        energies = compute_forces(structure)
-        if energies is None:
-            st.warning("Kraftverteilung nicht berechenbar – Struktur wird ohne Heatmap angezeigt.")
-        fig = plot_heatmap(structure, energies=energies)
-        st.plotly_chart(fig, use_container_width=True, key="tab_heatmap")
+        show_heatmap_view(structure, key="tab_heatmap")
 
     elif view == "Lastpfade":
-        u = compute_displacement(structure)
-        energies = compute_forces(structure)
-        if u is None or energies is None:
-            st.warning("Lastpfade nicht berechenbar – optimierte Struktur ist singulär.")
-        else:
-            arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
-            show_top = st.slider("Top-Stäbe anzeigen", 10, 500, 80, 10)
-            fig = plot_load_paths_with_arrows(
-                structure, u=u, energies=energies,
-                arrow_scale=arrow_scale, top_n=show_top,
-            )
-            st.plotly_chart(fig, use_container_width=True, key="tab_lastpfade")
+        show_loadpaths_view(structure, key="tab_lastpfade")
 
     elif view == "Verformung (statisch)":
-        u = compute_displacement(structure)
-        if u is None:
-            st.warning("Verschiebung nicht berechenbar – optimierte Struktur ist singulär.")
-            st.stop()
-        u_abs = np.abs(u)
-        u_nonzero = u_abs[u_abs > 0]
-        u_ref = float(np.percentile(u_nonzero, 95)) if len(u_nonzero) > 0 else 1.0
-        nodes_active = [n for n in structure.nodes if n.active]
-        x_vals = [n.x for n in nodes_active]
-        y_vals = [n.y for n in nodes_active]
-        struct_size = max(
-            max(x_vals) - min(x_vals) if x_vals else 1.0,
-            max(y_vals) - min(y_vals) if y_vals else 1.0,
-        )
-        auto_scale = 0.15 * struct_size / u_ref if u_ref > 0 else 1.0
-        scale = st.slider(
-            "Skalierungsfaktor Verformung",
-            min_value=0.1,
-            max_value=float(max(10.0, auto_scale * 3)),
-            value=float(round(auto_scale, 2)),
-            step=0.1,
-        )
-        fig = plot_deformed_structure(structure, u, scale, u_ref=u_ref)
-        st.plotly_chart(fig, use_container_width=True, key="tab_verformung")
+        show_deformation_view(structure, key="tab_verformung")
 
     elif view == "Eigenmode":
         K     = structure.assemble_K()
-        M     = assemble_M(structure, node_mass=float(node_mass))
+        M     = assemble_M(structure, node_mass=1.0)
         fixed = structure.fixed_dofs()
         eigenvalues, eigenvectors = solve_eigenvalue(K, M, fixed, n_modes=1)
 
@@ -268,7 +218,7 @@ with tab1:
         st.caption(f"ω₁ = {omega_1_vis:.2f} rad/s  |  f₁ = {omega_1_vis / (2.0 * math.pi):.3f} Hz  "
                    f"(Darstellung rein qualitativ, keine physikalische Amplitude)")
         fig = plot_deformed_structure(structure, eigvec_1, scale_ev, u_ref=u_ref_ev)
-        st.plotly_chart(fig, use_container_width=True, key="tab_eigenmode")
+        st.plotly_chart(fig, width='stretch', key="tab_eigenmode")
 
         st.divider()
         col_a, col_b = st.columns(2)
@@ -331,7 +281,7 @@ with tab2:
             legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=10, r=10, t=30, b=10),
         )
-        st.plotly_chart(fig, use_container_width=True, key="tab2_eigenfreq")
+        st.plotly_chart(fig, width='stretch', key="tab2_eigenfreq")
 
         f_e = omega_e / (2.0 * math.pi)
         c1, c2 = st.columns(2)
@@ -357,7 +307,7 @@ with tab3:
             legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=10, r=10, t=30, b=10),
         )
-        st.plotly_chart(fig, use_container_width=True, key="tab3_freqdist")
+        st.plotly_chart(fig, width='stretch', key="tab3_freqdist")
         st.metric("Frequenzabstand final", f"{hist.freq_distance[-1]:.3f} rad/s")
 
 with tab4:

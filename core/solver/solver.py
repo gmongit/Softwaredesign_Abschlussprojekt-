@@ -11,7 +11,7 @@ def solve(K, F: npt.NDArray[np.float64], u_fixed_idx: list[int]) -> npt.NDArray[
     Fallback auf lsqr bei konsistenter Singularität. Gibt None bei echter Singularität zurück."""
 
     n = K.shape[0]
-    assert K.shape[0] == K.shape[1], "Stiffness matrix K must be square."
+    assert K.shape[0] == K.shape[1], "K-Matrix  must be square."
     assert n == F.shape[0], "Force vector F must have the same size as K."
 
     fixed_set = set(u_fixed_idx)

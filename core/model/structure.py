@@ -280,6 +280,23 @@ class Structure:
     def spring_forces(self, u: np.ndarray) -> np.ndarray:
         return self._per_spring_values(u, lambda s, ni, nj, u: s.axial_force(ni, nj, u))
 
+    def spring_stresses(self, u: np.ndarray) -> np.ndarray:
+        if self.beam_area <= 0:
+            return np.zeros(len(self.springs))
+        return self.spring_forces(u) / self.beam_area
+
+    def max_stress(self, u: np.ndarray) -> float:
+        stresses = self.spring_stresses(u)
+        return float(np.max(stresses)) if stresses.size > 0 else 0.0
+
+    def most_stressed_spring_nodes(self, u: np.ndarray) -> tuple[int, int] | None:
+        stresses = self.spring_stresses(u)
+        idx = int(np.argmax(stresses))
+        if stresses[idx] <= 0:
+            return None
+        s = self.springs[idx]
+        return s.node_i, s.node_j
+
     def detect_symmetry(self, eps: float = 1e-6) -> tuple[bool, dict[int, int] | None]:
         """Prüft vertikale Symmetrie. Gibt (is_symmetric, mirror_map) zurück."""
         active = [n for n in self.nodes if n.active]

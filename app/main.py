@@ -1,4 +1,3 @@
-# app/main.py
 import streamlit as st
 import os
 import sys
@@ -14,20 +13,19 @@ root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if root not in sys.path:
     sys.path.insert(0, root)
 
-# Landing Page
 if "app_mode" not in st.session_state:
     st.session_state.app_mode = "intro"
 
 st.set_page_config(
-    page_title="Topology UI", 
+    page_title="Topologieoptimierung", 
     layout="wide",
     initial_sidebar_state="collapsed" if st.session_state.app_mode == "intro" else "expanded"
 )
 
 # Seiten definieren
 mat_page = st.Page("pages/Material_Manager.py", title="Material Manager", icon="🧪")
-struct_page = st.Page("pages/Structure_Creator.py", title="Structure Creator", icon="🏗️")
-opt_page = st.Page("pages/Optimizer.py", title="Optimizer", icon="⚡")
+struct_page = st.Page("pages/Structure_Creator.py", title="Strukturdefinition", icon="🏗️")
+opt_page = st.Page("pages/Optimizer.py", title="Optimierung", icon="⚡")
 
 if st.session_state.app_mode == "intro":
     st.markdown(
@@ -41,9 +39,9 @@ if st.session_state.app_mode == "intro":
         unsafe_allow_html=True,
     )
 
-    st.title("🔧 Topology Optimization UI")
+    st.title("🔧 Topologieoptimierung")
     st.markdown("### Willkommen!")
-    st.write("Dies ist die Startseite. Hier gibt es keine störende Taskleiste links.")
+    st.write("Erstellen Sie eine Struktur, definieren Sie Randbedingungen und analysieren Sie die Optimierungsergebnisse.")
     
     if st.button("Jetzt starten 🚀", type="primary"):
         st.session_state.app_mode = "main_app"

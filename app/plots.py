@@ -323,6 +323,60 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
     return fig
 
 
+def generate_mode_animation_gif(
+    structure,
+    eigvec: np.ndarray,
+    scale: float,
+    u_ref: float,
+    n_frames: int = 24,
+    fps: int = 12,
+    width: int = 800,
+    height: int = 450,
+    on_progress=None,
+) -> bytes:
+    """Erzeugt ein GIF der Struktur, die im ersten Eigenmode schwingt."""
+    active = [n for n in structure.nodes if n.active]
+    all_x = [n.x for n in active]
+    all_y = [n.y for n in active]
+
+    # Feste Achsengrenzen: Strukturgröße + maximale Auslenkung als Puffer
+    bbox = max(max(all_x) - min(all_x), max(all_y) - min(all_y), 1.0)
+    margin = bbox * 0.08 + u_ref * scale * 1.5
+    x_range = [min(all_x) - margin, max(all_x) + margin]
+    y_range = [min(all_y) - margin, max(all_y) + margin]
+
+    layout_update = dict(
+        xaxis=dict(range=x_range, showgrid=False, zeroline=False, showticklabels=False,
+                   scaleanchor="y", scaleratio=1),
+        yaxis=dict(range=y_range, showgrid=False, zeroline=False, showticklabels=False),
+    )
+
+    frames: list[Image.Image] = []
+    for k in range(n_frames):
+        amplitude = np.cos(2.0 * np.pi * k / n_frames)
+        u_frame = eigvec * amplitude
+        fig = plot_deformed_structure(structure, u_frame, scale, u_ref=u_ref)
+        fig.update_layout(**layout_update)
+        frames.append(
+            Image.open(io.BytesIO(fig.to_image(format="png", width=width, height=height)))
+            .convert("RGB")
+            .quantize(colors=256)
+        )
+        if on_progress:
+            on_progress((k + 1) / n_frames)
+
+    gif_buf = io.BytesIO()
+    frames[0].save(
+        gif_buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=1000 // fps,
+        loop=0,
+    )
+    return gif_buf.getvalue()
+
+
 def generate_replay_gif(
     structure,
     hist,

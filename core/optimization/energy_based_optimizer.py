@@ -190,6 +190,8 @@ class EnergyBasedOptimizer(OptimizerBase):
         structure: Structure,
         target_mass_fraction: float,
         max_iters: int = 200,
+        on_iter=None,
+        force: bool = False,
     ) -> OptimizationHistory:
         if not (0.0 < target_mass_fraction <= 1.0):
             raise ValueError("target_mass_fraction must be in (0, 1].")
@@ -207,13 +209,38 @@ class EnergyBasedOptimizer(OptimizerBase):
         if is_sym:
             self.mirror_map = mirror_map
 
+        if force:
+            # Erzwungener Modus: alle FEM-Sicherheitschecks deaktiviert
+            for iter_idx in range(max_iters):
+                structure.remove_removable_nodes()
+                history.mass_fraction.append(structure.current_mass_fraction())
+                if structure.current_mass_fraction() <= target_mass_fraction:
+                    break
+                u = self._solve_structure(structure)
+                importance = (
+                    structure.node_importance_from_energy(u)
+                    if u is not None
+                    else np.zeros(len(structure.nodes))
+                )
+                effective_fraction = self._effective_remove_fraction(iter_idx)
+                candidates = self._select_removal_candidates(structure, importance, effective_fraction)
+                if not candidates:
+                    break
+                self._deactivate_nodes(structure, candidates)
+                history.removed_per_iter.append(len(candidates))
+                history.removed_nodes_per_iter.append(list(candidates))
+                if on_iter is not None:
+                    on_iter(structure, iter_idx, len(candidates))
+            return history
+
         blacklist: set[int] = set()
         needs_solve = True
         u: np.ndarray | None = None
 
         for iter_idx in range(max_iters):
-            removed = structure.remove_removable_nodes()
-            if removed > 0:
+            removed_set = structure._find_removable_nodes()
+            if removed_set:
+                structure.remove_removable_nodes()
                 needs_solve = True
 
             history.mass_fraction.append(structure.current_mass_fraction())
@@ -223,7 +250,11 @@ class EnergyBasedOptimizer(OptimizerBase):
             if needs_solve:
                 u = self._solve_structure(structure)
                 if u is None:
-                    break
+                    if removed_set:
+                        self._reactivate_nodes(structure, list(removed_set))
+                        u = self._solve_structure(structure)
+                    if u is None:
+                        break
                 needs_solve = False
 
             assert u is not None
@@ -248,6 +279,8 @@ class EnergyBasedOptimizer(OptimizerBase):
                 u = u_check
                 history.removed_per_iter.append(len(candidates))
                 history.removed_nodes_per_iter.append(list(candidates))
+                if on_iter is not None:
+                    on_iter(structure, iter_idx, len(candidates))
                 continue
 
             self._reactivate_nodes(structure, candidates)
@@ -271,5 +304,7 @@ class EnergyBasedOptimizer(OptimizerBase):
 
             history.removed_per_iter.append(len(actually_removed))
             history.removed_nodes_per_iter.append(actually_removed)
+            if on_iter is not None:
+                on_iter(structure, iter_idx, len(actually_removed))
 
         return history

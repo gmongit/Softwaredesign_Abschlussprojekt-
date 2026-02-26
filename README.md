@@ -23,9 +23,15 @@ Ausgangspunkt ist ein rechteckiges Federgitter (Stabwerk). Der Nutzer definiert 
 
 ```bash
 # Repository klonen
+<<<<<<< HEAD
 git clone https://github.com/gmongit/Softwaredesign_Abschlussprojekt-.git
 de
 cd Softwaredesign_Abschlussprojekt-
+=======
+git clone https://github.com/dein-repo/topologie-optimierung.git
+cd Softwaredesign_Abschlussprojekt-
+
+>>>>>>> ffffb671ff131624fc223af6aa4dc162ecaa0b5b
 
 # Virtuelle Umgebung erstellen und aktivieren
 python -m venv .venv

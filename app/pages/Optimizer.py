@@ -8,6 +8,7 @@ from app.shared import (
 from app.plots import plot_load_paths_with_arrows
 from app.service.optimization_service import (
     optimize_structure,
+    run_optimization,
     compute_displacement,
     compute_forces,
     validate_structure,
@@ -27,6 +28,9 @@ st.title("⚡ Optimizer")
 if st.session_state.structure is None:
     st.warning("Bitte zuerst im 'Structure Creator' ein Modell erstellen.")
     st.stop()
+
+_progress_ph = st.empty()
+_live_ph     = st.empty()
 
 with st.sidebar:
     st.header("Einstellungen")
@@ -55,21 +59,72 @@ with st.sidebar:
     show_structure_status(validation)
 
     if st.button("▶ Optimierung starten", type="primary", disabled=not validation.ok):
+        _target = float(target_mass)
+
+        def _on_iter(struct, i, n_rem):
+            frac = struct.current_mass_fraction()
+            prog = max(0.0, min(1.0, (1.0 - frac) / max(1.0 - _target, 1e-9)))
+            _progress_ph.progress(
+                prog,
+                text=f"Iteration {i} | Masse: {frac:.1%} | -{n_rem} Knoten",
+            )
+            with _live_ph.container():
+                st.plotly_chart(plot_structure(struct), use_container_width=True, key=f"_live_{i}")
+
         try:
             hist = optimize_structure(
                 st.session_state.structure,
                 material_name=selected_material if mat else None,
                 beam_area_mm2=beam_area_mm2,
                 remove_fraction=float(remove_fraction),
-                target_mass_fraction=float(target_mass),
-                max_iters=int(max_iters)
+                target_mass_fraction=_target,
+                max_iters=int(max_iters),
+                on_iter=_on_iter,
             )
+            _progress_ph.empty()
+            _live_ph.empty()
             st.session_state.history = hist
             st.session_state.gif_bytes = None
             mf = st.session_state.structure.current_mass_fraction()
             st.success(f"Fertig! Masse: {mf:.1%}")
         except ValueError as e:
             st.error(str(e))
+
+    # Warnung + Force-Button wenn Optimierung zu früh gestoppt wurde
+    if (st.session_state.history is not None
+            and st.session_state.structure is not None
+            and st.session_state.structure.current_mass_fraction() > float(target_mass) + 0.01):
+        mf_now = st.session_state.structure.current_mass_fraction()
+        st.warning(
+            f"Gestoppt bei **{mf_now:.1%}** – weitere Entfernung würde die Struktur singulär machen."
+        )
+        if st.button("⚠️ Trotzdem bis zur Zielmasse entfernen", type="secondary"):
+            _target_f = float(target_mass)
+
+            def _on_iter_force(struct, i, n_rem):
+                frac = struct.current_mass_fraction()
+                prog = max(0.0, min(1.0, (1.0 - frac) / max(1.0 - _target_f, 1e-9)))
+                _progress_ph.progress(prog, text=f"Iteration {i} | Masse: {frac:.1%} | -{n_rem} Knoten")
+                with _live_ph.container():
+                    st.plotly_chart(plot_structure(struct), use_container_width=True, key=f"_force_{i}")
+
+            try:
+                hist = run_optimization(
+                    st.session_state.structure,
+                    remove_fraction=float(remove_fraction),
+                    target_mass_fraction=_target_f,
+                    max_iters=int(max_iters),
+                    on_iter=_on_iter_force,
+                    force=True,
+                )
+                _progress_ph.empty()
+                _live_ph.empty()
+                st.session_state.history = hist
+                st.session_state.gif_bytes = None
+                mf = st.session_state.structure.current_mass_fraction()
+                st.success(f"Fertig (erzwungen)! Masse: {mf:.1%}")
+            except ValueError as e:
+                st.error(str(e))
 
 # --- Visualisierung ---
 if st.session_state.history is not None:
@@ -97,21 +152,22 @@ if st.session_state.history is not None:
 
     elif view == "Lastpfade":
         u = compute_displacement(st.session_state.structure)
-
-        # das gleiche Array wie für die Heatmap (bei euch heißt es evtl. energies)
         energies = compute_forces(st.session_state.structure)
 
-        arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
-        show_top = st.slider("Top-Stäbe anzeigen", 10, 500, 80, 10)
+        if u is None or energies is None:
+            st.warning("Lastpfade nicht berechenbar – optimierte Struktur ist singulär.")
+        else:
+            arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
+            show_top = st.slider("Top-Stäbe anzeigen", 10, 500, 80, 10)
 
-        fig = plot_load_paths_with_arrows(
-            st.session_state.structure,
-            u=u,
-            energies=energies,
-            arrow_scale=arrow_scale,
-            top_n=show_top,
-        )
-        st.plotly_chart(fig, width="stretch")
+            fig = plot_load_paths_with_arrows(
+                st.session_state.structure,
+                u=u,
+                energies=energies,
+                arrow_scale=arrow_scale,
+                top_n=show_top,
+            )
+            st.plotly_chart(fig, width="stretch")
 
 
 

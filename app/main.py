@@ -24,8 +24,9 @@ st.set_page_config(
 
 # Seiten definieren
 mat_page = st.Page("pages/Material_Manager.py", title="Material Manager", icon="🧪")
-struct_page = st.Page("pages/Structure_Creator.py", title="Strukturdefinition", icon="🏗️")
-opt_page = st.Page("pages/Optimizer.py", title="Optimierung", icon="⚡")
+struct_page = st.Page("pages/Structure_Creator.py", title="Structure Creator", icon="🏗️")
+opt_page = st.Page("pages/Optimizer.py", title="Optimizer", icon="⚡")
+dyn_opt_page = st.Page("pages/Dynamic_Optimizer.py", title="Dynamic Optimizer", icon="🌊")
 
 if st.session_state.app_mode == "intro":
     st.markdown(
@@ -49,6 +50,6 @@ if st.session_state.app_mode == "intro":
 else:
     pg = st.navigation({
         "Konfiguration": [mat_page, struct_page],
-        "Berechnung": [opt_page]
+        "Berechnung": [opt_page, dyn_opt_page]
     })
     pg.run()

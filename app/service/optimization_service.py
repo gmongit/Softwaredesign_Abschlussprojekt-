@@ -75,6 +75,8 @@ def run_optimization(
     remove_fraction: float,
     target_mass_fraction: float,
     max_iters: int,
+    on_iter=None,
+    force: bool = False,
 ):
     """Startet die Topologie-Optimierung und gibt die History zurück."""
 
@@ -84,7 +86,7 @@ def run_optimization(
         start_factor=0.3,
         ramp_iters=10,
     )
-    return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters)
+    return opt.run(structure, target_mass_fraction=target_mass_fraction, max_iters=max_iters, on_iter=on_iter, force=force)
 
 
 def optimize_structure(
@@ -93,7 +95,9 @@ def optimize_structure(
     beam_area_mm2: float,
     remove_fraction: float,
     target_mass_fraction: float,
-    max_iters: int
+    max_iters: int,
+    on_iter=None,
+    force: bool = False,
 ):
     """
     Führt den gesamten Optimierungsprozess durch:
@@ -101,7 +105,7 @@ def optimize_structure(
     2. Optimierungsschleife (inkl. Symmetrie-Erkennung)
     """
     prepare_structure(structure, material_name, beam_area_mm2)
-    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters)
+    return run_optimization(structure, remove_fraction, target_mass_fraction, max_iters, on_iter=on_iter, force=force)
 
 
 def _validate_boundary_conditions(structure: Structure):

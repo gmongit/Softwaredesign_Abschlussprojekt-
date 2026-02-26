@@ -146,5 +146,5 @@ Zusätzlich zur statischen Optimierung bietet der **Dynamic Optimizer** eine eig
 ## 👥 Entwickelt von
 
 MCI – Semester 3, Softwaredesign  
-gmongit · Christian Jäschke · nsextro-code 
-Studienjahr 2025/2026
+Simon franz  · Christian Jäschke · Noah Sextro
+

@@ -199,13 +199,23 @@ if st.session_state.history is not None:
         show_export_buttons(fig, base)
 
     # --- Metriken ---
+    # --- Metriken ---
     structure = st.session_state.structure
     is_sym, _ = structure.detect_symmetry()
-    c1, c2, c3, c4 = st.columns(4)
+
+    current_mass = structure.total_mass()
+    initial_mass = float(getattr(structure, "_initial_mass", 0.0))
+    removed_mass = max(0.0, initial_mass - current_mass)
+
+
+    c1, c2, c3 = st.columns(3)
+    c4, c5, c6 = st.columns(3)
     c1.metric("Aktive Knoten", structure.active_node_count())
     c2.metric("Gesamt Knoten", structure.total_node_count())
     c3.metric("Massenanteil", f"{structure.current_mass_fraction():.1%}")
-    c4.metric("Symmetrie", "Symmetrisch" if is_sym else "Asymmetrisch")
+    c4.metric("Masse", f"{current_mass:.3f} kg")
+    c5.metric("Entfernte Masse", f"{removed_mass:.3f} kg")
+    c6.metric("Symmetrie", "Symmetrisch" if is_sym else "Asymmetrisch")
 
     # --- Optimierungsverlauf ---
     hist = st.session_state.history

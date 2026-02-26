@@ -51,28 +51,22 @@ Das Tragwerk wird als lineares 2D-Stabwerk modelliert:
 - Kleine Verformungen
 - Axiale Stäbe (keine Biegung)
 
-### Berechnungsschritte
+## ⚙️ Berechnungsschritte
 
-1. Aufstellen der globalen Steifigkeitsmatrix  
-   \[
-   K = \sum k_e
-   \]
+1. **Aufstellen der globalen Steifigkeitsmatrix**  
+   `K = Σ k_e`
 
-2. Lösung des linearen Gleichungssystems  
-   \[
-   K \cdot u = F
-   \]
+2. **Lösung des linearen Gleichungssystems**  
+   `K · u = F`
 
-3. Berechnung der Stabenergie  
-   \[
-   E_e = \frac{1}{2} k_e (\Delta L)^2
-   \]
+3. **Berechnung der Stabenergie**  
+   `E_e = ½ · k_e · (ΔL)²`
 
-4. Entfernen von Elementen mit geringer Energie
+4. **Entfernen von Elementen mit geringer Energie**  
+   Knoten mit dem geringsten Energieanteil werden schrittweise entfernt
 
-5. Konnektivitätsprüfung  
-   → Sicherstellen, dass Last und Auflager weiterhin verbunden sind
-
+5. **Konnektivitätsprüfung**  
+   Sicherstellen, dass Last und Auflager weiterhin verbunden sind
 
 
 ## 📋 Benutzungsanleitung

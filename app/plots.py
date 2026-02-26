@@ -31,14 +31,14 @@ def _node_traces(structure: Structure):
         if n.fix_x and n.fix_y:
             # Festlager (Pin) — gefülltes Dreieck
             colors.append("#FF6B35")
-            symbols.append("triangle-down")
-            sizes.append(14)
+            symbols.append("triangle-up")
+            sizes.append(22)
             hover.append(f"Knoten {n.id}<br>Festlager (fix_x, fix_y)")
         elif n.fix_x or n.fix_y:
             # Loslager (Roller) — offenes Dreieck
             colors.append("#FF9F1C")
-            symbols.append("triangle-down-open")
-            sizes.append(14)
+            symbols.append("triangle-up-open")
+            sizes.append(22)
             hover.append(f"Knoten {n.id}<br>Loslager (fix_y)")
         elif abs(n.fx) > 0 or abs(n.fy) > 0:
             colors.append("#FFD700")

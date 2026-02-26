@@ -8,3 +8,4 @@ tinydb
 Pillow
 pytest
 scipy
+streamlit-drawable-canvas

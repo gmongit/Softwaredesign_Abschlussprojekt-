@@ -212,8 +212,9 @@ class EnergyBasedOptimizer(OptimizerBase):
         u: np.ndarray | None = None
 
         for iter_idx in range(max_iters):
-            removed = structure.remove_removable_nodes()
-            if removed > 0:
+            removed_set = structure._find_removable_nodes()
+            if removed_set:
+                structure.remove_removable_nodes()
                 needs_solve = True
 
             history.mass_fraction.append(structure.current_mass_fraction())
@@ -223,7 +224,11 @@ class EnergyBasedOptimizer(OptimizerBase):
             if needs_solve:
                 u = self._solve_structure(structure)
                 if u is None:
-                    break
+                    if removed_set:
+                        self._reactivate_nodes(structure, list(removed_set))
+                        u = self._solve_structure(structure)
+                    if u is None:
+                        break
                 needs_solve = False
 
             assert u is not None

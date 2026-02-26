@@ -49,6 +49,12 @@ def solve(K, F: npt.NDArray[np.float64], u_fixed_idx: list[int]) -> npt.NDArray[
     if np.any(np.isnan(u_f)) or np.any(np.isinf(u_f)):
         return None
 
+    # Residual-Check: Erfüllt die Lösung K_ff·u_f = F_f?
+    r = K_ff @ u_f - F_f
+    F_norm = np.linalg.norm(F_f)
+    if F_norm > 0 and np.linalg.norm(r) / F_norm > 1e-4:
+        return None
+
     u = np.zeros(n)
     u[free] = u_f
     return u

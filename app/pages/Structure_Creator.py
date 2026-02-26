@@ -16,6 +16,7 @@ from app.service.structure_service import (
     set_last,
     toggle_node,
     apply_default_boundary_conditions,
+    MAX_LOADS,
 )
 from app.plots import plot_structure
 
@@ -166,6 +167,13 @@ if orig is not None:
     bc_force = -10.0
     if bc_mode == "Last setzen":
         bc_force = st.number_input("Kraft Fy [N]", value=-10.0, key="bc_force")
+        load_count = sum(
+            1 for n in orig.nodes
+            if n.active and (abs(n.fx) > 0 or abs(n.fy) > 0)
+        )
+        st.caption(f"Lasten: {load_count} / {MAX_LOADS}")
+        if load_count >= MAX_LOADS:
+            st.warning(f"Maximale Anzahl an Lastknoten erreicht ({MAX_LOADS}).")
 
     if bc_mode and bc_mode != "Ansicht":
         st.caption("Klicke auf einen Knoten im Plot.")

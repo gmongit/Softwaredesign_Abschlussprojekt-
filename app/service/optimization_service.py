@@ -1,11 +1,10 @@
-import numpy as np
 from dataclasses import dataclass, field
 
 from core.model.structure import Structure
 from core.db.material_store import material_store
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, OptimizationHistory
 from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
-from core.solver.solver import solve
+from core.optimization.support_rebuilder import rebuild_support, RebuildResult
 
 _TERMINAL_REASONS = {
     "Ziel-Massenanteil erreicht",
@@ -47,7 +46,7 @@ def validate_structure(structure: Structure) -> StructureValidation:
         result.errors.append("Struktur nicht zusammenhängend oder Lastpfad unterbrochen")
 
     if result.ok:
-        u = compute_displacement(structure)
+        u = structure.compute_displacement()
         if u is None:
             result.errors.append("Struktur ist bereits singulär (nicht lösbar)")
 
@@ -223,33 +222,6 @@ def _validate_boundary_conditions(structure: Structure):
         raise ValueError("Struktur ist nicht zusammenhängend oder Lastpfad zu Lager unterbrochen.")
 
 
-
-def compute_displacement(structure: Structure) -> np.ndarray | None:
-    """Löst das Gleichungssystem K·u = F. Gibt None bei singulärer Matrix zurück."""
-    K = structure.assemble_K()
-    F = structure.assemble_F()
-    fixed = structure.fixed_dofs()
-    return solve(K, F, fixed)
-
-
-def compute_energies(structure: Structure) -> np.ndarray | None:
-    """Berechnet Formänderungsenergie pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.spring_energies(u)
-
-
-def compute_forces(structure: Structure) -> np.ndarray | None:
-    """Berechnet Axialkraft pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.spring_forces(u)
-
-
-def compute_max_stress(structure: Structure) -> float | None:
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.max_stress(u)
+def run_rebuild_support(structure: Structure, **kwargs) -> RebuildResult:
+    """Nachverstärkung: reaktiviert Knoten zur Stress-Reduktion."""
+    return rebuild_support(structure, **kwargs)

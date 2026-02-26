@@ -9,6 +9,8 @@ from core.model.node import Node
 from core.model.spring import Spring
 from core.model.structure import Structure
 
+MAX_LOADS = 5
+
 
 def create_rectangular_grid(width: float, height: float, nx: int, ny: int) -> Structure:
     nodes: list[Node] = []
@@ -167,15 +169,25 @@ def set_loslager(structure: Structure, node_id: int) -> bool:
 
 
 def set_last(structure: Structure, node_id: int, fy: float) -> bool:
-    """Setzt/entfernt Last. Entfernt vorherige. Gibt True zurück wenn gesetzt."""
+    """Setzt/entfernt Last. Gibt True zurück wenn gesetzt."""
     node = structure.nodes[node_id]
     is_set = abs(node.fy) > 0
-    if not is_set:
-        _clear_bc(structure, node_id, lambda n: abs(n.fx) > 0 or abs(n.fy) > 0)
-    node.fy = 0.0 if is_set else float(fy)
+    if is_set:
+        node.fy = 0.0
+        node.fix_x = False
+        node.fix_y = False
+        return False
+    # Limit prüfen
+    current_loads = sum(
+        1 for n in structure.nodes
+        if n.active and n.id != node_id and (abs(n.fx) > 0 or abs(n.fy) > 0)
+    )
+    if current_loads >= MAX_LOADS:
+        return False
+    node.fy = float(fy)
     node.fix_x = False
     node.fix_y = False
-    return not is_set
+    return True
 
 
 

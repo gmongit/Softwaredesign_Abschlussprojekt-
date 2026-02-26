@@ -65,17 +65,36 @@ def _inactive_node_trace(structure: Structure):
     return ix, iy, ids, hover
 
 
-def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figure:
+def plot_structure(
+    structure: Structure,
+    show_inactive: bool = False,
+    highlight_nodes: list[int] | None = None,
+) -> go.Figure:
+    highlight = set(highlight_nodes) if highlight_nodes else set()
+
+    # Springs aufteilen: normal (blau) vs. highlighted (grün)
     sx, sy = [], []
+    hx, hy = [], []
     for s in structure.springs:
         if not s.active:
             continue
         ni = structure.nodes[s.node_i]
         nj = structure.nodes[s.node_j]
-        sx += [ni.x, nj.x, None]
-        sy += [ni.y, nj.y, None]
+        if highlight and (s.node_i in highlight or s.node_j in highlight):
+            hx += [ni.x, nj.x, None]
+            hy += [ni.y, nj.y, None]
+        else:
+            sx += [ni.x, nj.x, None]
+            sy += [ni.y, nj.y, None]
 
     nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = _node_traces(structure)
+
+    # Highlighted Knoten grün + größer
+    if highlight:
+        for i, nid in enumerate(node_ids):
+            if nid in highlight:
+                colors[i] = "#00FF88"
+                sizes[i] = 8
 
     fig = go.Figure()
 
@@ -87,6 +106,16 @@ def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figu
         hoverinfo="skip",
         showlegend=False,
     ))
+
+    # Trace: Highlighted Springs (grün)
+    if hx:
+        fig.add_trace(go.Scatter(
+            x=hx, y=hy,
+            mode="lines",
+            line=dict(color="#00FF88", width=2.5),
+            hoverinfo="skip",
+            showlegend=True, name="Reaktiviert",
+        ))
 
     # Trace 1: Aktive Knoten (Marker)
     fig.add_trace(go.Scatter(
@@ -115,7 +144,13 @@ def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figu
                 showlegend=False,
             ))
 
-    fig.update_layout(**_base_layout())
+    layout = _base_layout()
+    if highlight:
+        layout["showlegend"] = True
+        layout["legend"] = dict(
+            font=dict(color="white"), bgcolor="rgba(0,0,0,0.3)",
+        )
+    fig.update_layout(**layout)
     return fig
 
 
@@ -544,3 +579,5 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
     )
 
     return fig
+
+

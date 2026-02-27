@@ -274,5 +274,5 @@ Die eigentliche Implementierung, die fachlichen Entscheidungen und das Gesamtkon
 ## 👥 Entwickelt von
 
 MCI – Semester 3, Softwaredesign
-Simon franz  · Christian Jäschke · Noah Sextro
+Simon Franz  · Christian Jäschke · Noah Sextro
 

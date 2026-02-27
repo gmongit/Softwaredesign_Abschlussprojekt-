@@ -38,9 +38,9 @@ st.divider()
 if view == "Manuell":
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        width   = st.number_input("Breite",        min_value=1.0, value=10.0, step=1.0)
+        width   = st.number_input("Breite (m)",    min_value=1.0, value=10.0, step=1.0)
     with col2:
-        height  = st.number_input("Höhe",          min_value=0.5, value=2.0,  step=0.5)
+        height  = st.number_input("Höhe (m)",      min_value=0.5, value=2.0,  step=0.5)
     with col3:
         nx      = st.number_input("Knoten X (nx)", min_value=2,   value=31,   step=2)
     with col4:

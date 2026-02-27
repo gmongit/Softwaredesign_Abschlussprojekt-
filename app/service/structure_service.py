@@ -43,22 +43,6 @@ def create_rectangular_grid(width: float, height: float, nx: int, ny: int) -> St
     return Structure(nodes=nodes, springs=springs)
 
 
-# UNUSED — wird durch set_festlager/set_loslager/set_last ersetzt
-# def apply_simply_supported_beam(structure: Structure, nx: int, ny: int, load_fy: float) -> None:
-#     for n in structure.nodes:
-#         n.fix_x = False
-#         n.fix_y = False
-#         n.fx = 0.0
-#         n.fy = 0.0
-
-#     structure.nodes[0].fix_y = True
-#     structure.nodes[nx - 1].fix_x = True
-#     structure.nodes[nx - 1].fix_y = True
-
-#     mid_col = nx // 2
-#     structure.nodes[(ny - 1) * nx + mid_col].fy = float(load_fy)
-
-
 # ── Bild → Struktur ─────────────────────────────────────────────────────────
 
 def image_to_binary_grid(

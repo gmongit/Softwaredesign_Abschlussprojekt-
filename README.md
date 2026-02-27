@@ -82,7 +82,7 @@ core/
 ## 📋 Benutzungsanleitung
 
 ### Schritt 1 – Material Manager
-Materialien mit Name, E-Modul (GPa), Streckgrenze (MPa) und Dichte (kg/m³) anlegen, bearbeiten und löschen. Die Daten werden persistent in einer TinyDB-Datenbank gespeichert und dienen als Grundlage für die physikalisch korrekte Berechnung der Federsteifigkeiten und Stabmassen.
+Materialien mit Name, E-Modul (GPa), Streckgrenze (MPa) und Dichte (kg/m³) anlegen, bearbeiten und löschen. Die Daten werden persistent in einer TinyDB-Datenbank gespeichert und dienen als Grundlage für die physikalisch korrekte Berechnung der Federsteifigkeiten und Stabmassen & berechnung mit Einbezug der Streckgrenze
 
 ### Schritt 2 – Strukturdefinition
 Strukturen können auf drei Wegen erstellt werden:
@@ -96,7 +96,8 @@ Nach dem Erstellen kann die Struktur interaktiv bearbeitet werden: Knoten ein-/a
 ### Schritt 3 – Optimierung
 - **Ziel-Massenanteil** einstellen (z.B. 0.4 = 40% des Materials bleibt übrig)
 - **Entfernungsrate** und **Max. Iterationen** festlegen
-- **Material und Sicherheitsfaktor** wählen
+- **Material** wählen – Federsteifigkeiten und Stabmassenwerden daraus berechnet
+- Optional: **Streckgrenzen-Limit** aktivieren – die Optimierung stoppt dann, sobald die maximale Spannung die Streckgrenze (× Sicherheitsfaktor) überschreitet
 - Auf **„Optimierung starten"** klicken
 
 ### Schritt 4 – Ergebnis analysieren
@@ -221,12 +222,29 @@ Der **SIMP-Optimizer** (Solid Isotropic Material with Penalization) verfolgt ein
 
 ## 🔧 Support Rebuilder
 
-Der **Support Rebuilder** greift ein, wenn eine Struktur nach der Optimierung überbelastet ist oder die Streckgrenze überschreitet. Er reaktiviert gezielt zuvor entfernte Knoten, um die Spannung zu reduzieren – ohne die gesamte Optimierung zu wiederholen.
+Der **Support Rebuilder** kann manuell aktiviert werden und hilft dabei,  die am stärksten belastete Stelle zu entlasten. Er reaktiviert gezielt zuvor entfernte Knoten, um die Spannungsspitze zu senken, – ohne die gesamte Optimierung zu wiederholen.
 
 - Sucht in der Nachbarschaft der am stärksten belasteten Federn nach deaktivierten Knoten
 - Gruppiert Kandidaten in Cluster und testet Kombinationen (Brute-Force mit Limit)
 - Reaktiviert nur die Knoten, die die Spannung tatsächlich unter die Streckgrenze senken
-- Ergebnis: minimaler Materialzuwachs bei wiederhergestellter Tragfähigkeit
+- Ergebnis: minimaler Materialzuwachs & Schwachstelle wird gezielt entlastet
+
+Mit folgendem Setup lässt sich der Support Rebuilder gut testen.
+Da es vorkommen kann, dass Reaktivierungen nur geringe Verbesserungen bringen oder Spannungsspitzen Global sogar verschlechtern.
+
+Struktur:  Breite: 10 | Höhe: 2 | Knoten (x): 45 | Knoten (y): 32
+Optimizer:  Material: Aluminium EN-AW6060 | Streckgrenzen-Limit: deaktiviert | Ziel-Massenanteil: 0.17 | Entfernungsrate: 0.05 | Max. Iterationen: 120
+Support Rebuilder:  Top Federn: 20 % | Min. Lastschwelle: 75 % | Min. Verbesserung: 5 %
+Ergebnis (Referenzlauf):  Reduktion des maximalen Stresses: 29% | Zusätzliche Masse: 1,1 %
+
+---
+### Solver()
+
+Verwendung eines **Sparse-Solvers** von SciPy, zusätzlich wird über LSQR-Fallback und das relative Residuum ||K·u − F|| / ||F|| sichergestellt, dass numerisch unzuverlässige Lösungen – auch bei fast-singulärem Verhalten – erkannt und verworfen werden (None).
+
+---
+### Symmetrieerkennung
+die Struktur wird automatisch auf vertikale Spiegelsymmetrie geprüft; symmetrische Knotenpaare werden stets gemeinsam entfernt, sodass die Symmetrie über alle Iterationen erhalten bleibt
 
 ---
 
@@ -240,8 +258,9 @@ Der **Support Rebuilder** greift ein, wenn eine Struktur nach der Optimierung ü
 
 ## 🤖 Verwendete Hilfsmittel
 
-Zur Unterstützung während der Entwicklung wurde KI-Assistenz (Claude von Anthropic) eingesetzt. Die KI hat dabei in folgenden Bereichen geholfen:
+Zur Unterstützung während der Entwicklung wurde KI-Assistenz (Claude von Anthropic & Google Gemini) eingesetzt. Die KI hat dabei in folgenden Bereichen geholfen:
 
+- **Debugging & Fehlerbehebung** – Analyse von Fehlermeldungen sowie Erkennung und Korrektur von Syntax- und Logikfehlern
 - **Versionskontrolle** – Git-Workflows, Branch-Management und Merge-Konflikte
 - **Testing** – Strukturierung und Formulierung von Unit-Tests
 - **Projektstruktur** – Aufteilung in Module und Schichten (Core / App / Service)

@@ -9,10 +9,6 @@ from core.model.structure import Structure
 
 
 def _base_layout() -> dict:
-    """
-    Erzeugt das Standard-Layout für alle Plotly-Strukturplots.
-    Stellt ein einheitliches dunkles Design mit fixierter Achsenskalierung sicher.
-    """
     return dict(
         paper_bgcolor="#1A1A2E",
         plot_bgcolor="#16213E",
@@ -25,10 +21,6 @@ def _base_layout() -> dict:
 
 
 def _node_traces(structure: Structure):
-    """
-    Erstellt die Plot-Daten für alle aktiven Knoten einer Struktur.
-    Weist je nach Lagerung oder Last passende Farben, Symbole und Hover-Informationen zu.
-    """
     nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = [], [], [], [], [], [], []
     for n in structure.nodes:
         if not n.active:
@@ -39,14 +31,14 @@ def _node_traces(structure: Structure):
         if n.fix_x and n.fix_y:
             # Festlager (Pin) — gefülltes Dreieck
             colors.append("#FF6B35")
-            symbols.append("triangle-up")
-            sizes.append(22)
+            symbols.append("triangle-down")
+            sizes.append(14)
             hover.append(f"Knoten {n.id}<br>Festlager (fix_x, fix_y)")
         elif n.fix_x or n.fix_y:
             # Loslager (Roller) — offenes Dreieck
             colors.append("#FF9F1C")
-            symbols.append("triangle-up-open")
-            sizes.append(22)
+            symbols.append("triangle-down-open")
+            sizes.append(14)
             hover.append(f"Knoten {n.id}<br>Loslager (fix_y)")
         elif abs(n.fx) > 0 or abs(n.fy) > 0:
             colors.append("#FFD700")
@@ -62,10 +54,6 @@ def _node_traces(structure: Structure):
 
 
 def _inactive_node_trace(structure: Structure):
-    """
-    Erstellt die Plot-Daten für alle inaktiven Knoten der Struktur.
-    Dient zur separaten Visualisierung entfernter bzw. deaktivierter Knoten.
-    """
     ix, iy, ids, hover = [], [], [], []
     for n in structure.nodes:
         if n.active:
@@ -77,21 +65,36 @@ def _inactive_node_trace(structure: Structure):
     return ix, iy, ids, hover
 
 
-def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figure:
-    """
-    Visualisiert die aktuelle Struktur mit allen aktiven Stäben und Knoten.
-    Optional können auch inaktive Knoten zur Analyse angezeigt werden.
-    """
+def plot_structure(
+    structure: Structure,
+    show_inactive: bool = False,
+    highlight_nodes: list[int] | None = None,
+) -> go.Figure:
+    highlight = set(highlight_nodes) if highlight_nodes else set()
+
+    # Springs aufteilen: normal (blau) vs. highlighted (grün)
     sx, sy = [], []
+    hx, hy = [], []
     for s in structure.springs:
         if not s.active:
             continue
         ni = structure.nodes[s.node_i]
         nj = structure.nodes[s.node_j]
-        sx += [ni.x, nj.x, None]
-        sy += [ni.y, nj.y, None]
+        if highlight and (s.node_i in highlight or s.node_j in highlight):
+            hx += [ni.x, nj.x, None]
+            hy += [ni.y, nj.y, None]
+        else:
+            sx += [ni.x, nj.x, None]
+            sy += [ni.y, nj.y, None]
 
     nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = _node_traces(structure)
+
+    # Highlighted Knoten grün + größer
+    if highlight:
+        for i, nid in enumerate(node_ids):
+            if nid in highlight:
+                colors[i] = "#00FF88"
+                sizes[i] = 8
 
     fig = go.Figure()
 
@@ -103,6 +106,16 @@ def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figu
         hoverinfo="skip",
         showlegend=False,
     ))
+
+    # Trace: Highlighted Springs (grün)
+    if hx:
+        fig.add_trace(go.Scatter(
+            x=hx, y=hy,
+            mode="lines",
+            line=dict(color="#00FF88", width=2.5),
+            hoverinfo="skip",
+            showlegend=True, name="Reaktiviert",
+        ))
 
     # Trace 1: Aktive Knoten (Marker)
     fig.add_trace(go.Scatter(
@@ -131,15 +144,17 @@ def plot_structure(structure: Structure, show_inactive: bool = False) -> go.Figu
                 showlegend=False,
             ))
 
-    fig.update_layout(**_base_layout())
+    layout = _base_layout()
+    if highlight:
+        layout["showlegend"] = True
+        layout["legend"] = dict(
+            font=dict(color="white"), bgcolor="rgba(0,0,0,0.3)",
+        )
+    fig.update_layout(**layout)
     return fig
 
 
 def plot_heatmap(structure: Structure, energies=None) -> go.Figure:
-    """
-    Visualisiert die Struktur als Heatmap, wobei die Stabfarbe der gespeicherten Energie entspricht.
-    Höhere Energien werden farblich hervorgehoben und ermöglichen die Identifikation stark belasteter Bereiche.
-    """
     fig = go.Figure()
 
     e_max = max(energies) if energies is not None and max(energies) > 0 else 1.0
@@ -187,15 +202,11 @@ def plot_heatmap(structure: Structure, energies=None) -> go.Figure:
 
 def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figure:
     fig = go.Figure()
-    """
-    Visualisiert die unverformte und die verformte Struktur basierend auf dem Verschiebungsvektor u.
-    Die Verformung wird mit `scale` skaliert und optional über `u_ref` (Clipping) gegen Ausreißer begrenzt.
-    """
 
     # Ausreißer clippen: max. 3x die Referenzverschiebung erlaubt
     clip = 3.0 * u_ref if u_ref is not None and u_ref > 0 else None
 
-    # Unverformte Struktur (grau, dünn) als Referenz
+    # --- Unverformte Struktur (grau, dünn) als Referenz ---
     sx_orig, sy_orig = [], []
     for s in structure.springs:
         if not s.active:
@@ -216,7 +227,7 @@ def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figu
         name="Unverformt",
     ))
 
-    #  Verformte Struktur (rot)
+    # --- Verformte Struktur (rot) ---
     sx_def, sy_def = [], []
     for s in structure.springs:
         if not s.active:
@@ -271,14 +282,10 @@ def plot_deformed_structure(structure, u, scale, u_ref: float = None) -> go.Figu
 
 
 def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> go.Figure:
-    """
-    Visualisiert den Optimierungsverlauf mit aktiven, bereits entfernten und aktuell entfernten Elementen.
-    Dient zur schrittweisen Darstellung des Materialabbaus während der Topologie-Optimierung.
-    """
     fig = go.Figure()
     all_removed = removed_so_far | just_removed
 
-    # Bereits entfernte Federn (sehr blass) 
+    # --- Bereits entfernte Federn (sehr blass) ---
     sx_gone, sy_gone = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -294,7 +301,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # Aktive Federn 
+    # --- Aktive Federn ---
     sx_act, sy_act = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -310,7 +317,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # Gerade entfernte Federn (orange)
+    # --- Gerade entfernte Federn (orange) ---
     sx_rem, sy_rem = [], []
     for s in structure.springs:
         ni = structure.nodes[s.node_i]
@@ -327,7 +334,7 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
         hoverinfo="skip", showlegend=False,
     ))
 
-    # Gerade entfernte Knoten (orange X) 
+    # --- Gerade entfernte Knoten (orange X) ---
     rem_nodes = [structure.nodes[nid] for nid in just_removed]
     if rem_nodes:
         fig.add_trace(go.Scatter(
@@ -352,7 +359,6 @@ def plot_replay_structure(structure, removed_so_far: set, just_removed: set) -> 
 
 
 def generate_mode_animation_gif(
-        
     structure,
     eigvec: np.ndarray,
     scale: float,
@@ -407,7 +413,6 @@ def generate_mode_animation_gif(
 
 
 def generate_replay_gif(
-    
     structure,
     hist,
     fps: int = 5,
@@ -417,10 +422,6 @@ def generate_replay_gif(
 ) -> bytes:
     n_steps = len(hist.removed_nodes_per_iter)
     total_frames = n_steps + 1  # +1 for initial frame
-    """
-    Erzeugt ein GIF des Optimierungsverlaufs, indem jede Iteration als Frame dargestellt wird.
-    Der finale Zustand wird für einige Sekunden gehalten, um das Endergebnis deutlich zu zeigen.
-    """
 
     all_x = [n.x for n in structure.nodes]
     all_y = [n.y for n in structure.nodes]
@@ -470,7 +471,7 @@ def generate_replay_gif(
 def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=80):
     """
     Lastpfade als Pfeile entlang der Stäbe.
-    Pfeillänge (gleiches Mapping wie Heatmap: Feder i -> energies[i]).
+    Pfeillänge ~ energies[i] (gleiches Mapping wie Heatmap: Feder i -> energies[i]).
     Richtung entlang Stab; Zug/Druck-Vorzeichen wird aus u über dL bestimmt.
     """
 
@@ -578,3 +579,102 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
     )
 
     return fig
+
+
+def plot_simp_structure(structure: Structure, a_max: float | None = None) -> go.Figure:
+    areas = [s.area for s in structure.springs if s.active]
+    if not areas:
+        fig = go.Figure()
+        fig.update_layout(**_base_layout())
+        return fig
+
+    a_max_val = a_max or max(areas) if areas else 1.0
+    if a_max_val <= 0:
+        a_max_val = 1.0
+
+    fig = go.Figure()
+
+    for spring in structure.springs:
+        if not spring.active:
+            continue
+        ni = structure.nodes[spring.node_i]
+        nj = structure.nodes[spring.node_j]
+        if not (ni.active and nj.active):
+            continue
+
+        t = spring.area / a_max_val
+        width = 0.5 + t * 7.5
+
+        r = int(30 + (1 - t) * 100)
+        g = int(80 + (1 - t) * 100)
+        b = int(180 + (1 - t) * 40)
+        alpha = 0.15 + 0.85 * t
+        color = f"rgba({r},{g},{b},{alpha})"
+
+        fig.add_trace(go.Scatter(
+            x=[ni.x, nj.x],
+            y=[ni.y, nj.y],
+            mode="lines",
+            line=dict(color=color, width=width),
+            hovertext=f"A = {spring.area*1e6:.2f} mm² ({t*100:.1f}%)",
+            hoverinfo="text",
+            showlegend=False,
+        ))
+
+    nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = _node_traces(structure)
+    fig.add_trace(go.Scatter(
+        x=nx_vals, y=ny_vals,
+        mode="markers",
+        marker=dict(color=colors, size=sizes, symbol=symbols,
+                    line=dict(width=1, color="#222")),
+        text=hover,
+        hoverinfo="text",
+        customdata=node_ids,
+        showlegend=False,
+    ))
+
+    fig.update_layout(**_base_layout())
+    return fig
+
+
+def plot_simp_convergence(history) -> go.Figure:
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Compliance", "Massenanteil"),
+        vertical_spacing=0.12,
+    )
+
+    fig.add_trace(go.Scatter(
+        y=history.compliance,
+        mode="lines+markers",
+        name="Compliance",
+        line=dict(color="#FF6B35", width=2),
+        marker=dict(size=3),
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        y=history.volume_fraction,
+        mode="lines+markers",
+        name="Massenanteil",
+        line=dict(color="#4A90D9", width=2),
+        marker=dict(size=3),
+    ), row=2, col=1)
+
+    fig.update_layout(
+        paper_bgcolor="#1A1A2E",
+        plot_bgcolor="#16213E",
+        font=dict(color="white"),
+        margin=dict(l=60, r=10, t=40, b=40),
+        height=500,
+        showlegend=False,
+    )
+    for i in range(1, 3):
+        fig.update_xaxes(gridcolor="#2A2A4A", row=i, col=1)
+        fig.update_yaxes(gridcolor="#2A2A4A", row=i, col=1)
+
+    return fig
+
+

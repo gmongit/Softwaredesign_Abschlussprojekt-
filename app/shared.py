@@ -5,7 +5,7 @@ import streamlit as st
 
 from core.db.case_store import case_store
 from core.db.material_store import material_store
-from app.service.optimization_service import StructureValidation, compute_displacement, compute_forces
+from app.service.optimization_service import StructureValidation
 from app.plots import (
     plot_structure, plot_heatmap, plot_deformed_structure, plot_load_paths_with_arrows,
 )
@@ -123,7 +123,7 @@ def material_sidebar():
 
 
 def show_heatmap_view(structure, key=None):
-    energies = compute_forces(structure)
+    energies = structure.compute_forces()
     if energies is None:
         st.warning("Kraftverteilung nicht berechenbar – Struktur wird ohne Heatmap angezeigt.")
     fig = plot_heatmap(structure, energies=energies)
@@ -132,8 +132,8 @@ def show_heatmap_view(structure, key=None):
 
 
 def show_loadpaths_view(structure, key=None):
-    u = compute_displacement(structure)
-    energies = compute_forces(structure)
+    u = structure.compute_displacement()
+    energies = structure.compute_forces()
     if u is None or energies is None:
         st.warning("Lastpfade nicht berechenbar – optimierte Struktur ist singulär.")
         return None
@@ -148,7 +148,7 @@ def show_loadpaths_view(structure, key=None):
 
 
 def show_deformation_view(structure, key=None):
-    u = compute_displacement(structure)
+    u = structure.compute_displacement()
     if u is None:
         st.warning("Verschiebung nicht berechenbar (singuläre Matrix).")
         st.stop()

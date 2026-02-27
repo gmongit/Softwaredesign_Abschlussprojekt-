@@ -6,6 +6,7 @@ from scipy import sparse
 
 from core.model.node import Node
 from core.model.spring import Spring
+from core.solver.solver import solve
 
 
 class Structure:
@@ -16,6 +17,7 @@ class Structure:
         self.springs = springs
         self.density: float = 0.0
         self.beam_area: float = 0.0
+        self.e_modul: float = 0.0
         self._initial_mass: float = 0.0
 
         self.support_ids: set[int] = set()
@@ -239,6 +241,7 @@ class Structure:
         return fixed
 
     def update_spring_stiffnesses(self, e_modul_pa: float, beam_area_m2: float, density: float = 0.0) -> None:
+        self.e_modul = e_modul_pa
         self.beam_area = beam_area_m2
         self.density = density
         for spring in self.springs:
@@ -246,8 +249,31 @@ class Structure:
                 continue
             ni = self.nodes[spring.node_i]
             nj = self.nodes[spring.node_j]
+            spring.area = beam_area_m2  # For SIMP optimizer
             spring.k = spring.compute_k(ni, nj, e_modul_pa, beam_area_m2)
         self._initial_mass = self.total_mass()
+
+    def update_spring_stiffnesses_from_areas(self, e_modul_pa: float) -> None:
+        """Updates k = E * A_e / L for each spring based on stored spring.area."""
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            spring.k = e_modul_pa * spring.area / spring.length(ni, nj)
+
+    def total_volume_from_areas(self) -> float:
+        """Calculates total volume V = Σ(A_e * L_e) of all active springs."""
+        total = 0.0
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            if not (ni.active and nj.active):
+                continue
+            total += spring.area * spring.length(ni, nj)
+        return total
 
     def total_mass(self) -> float:
         """Summe der Massen aller aktiven Stäbe."""
@@ -296,6 +322,29 @@ class Structure:
             return None
         s = self.springs[idx]
         return s.node_i, s.node_j
+
+    # Solve basierte Methoden
+
+    def compute_displacement(self) -> np.ndarray | None:
+        """Löst K·u = F. Gibt None bei singulärer Matrix zurück."""
+        K = self.assemble_K()
+        F = self.assemble_F()
+        return solve(K, F, self.fixed_dofs())
+
+    def compute_forces(self) -> np.ndarray | None:
+        """Axialkraft pro Feder (löst intern). None bei Singularität."""
+        u = self.compute_displacement()
+        return self.spring_forces(u) if u is not None else None
+
+    def compute_energies(self) -> np.ndarray | None:
+        """Formänderungsenergie pro Feder (löst intern). None bei Singularität."""
+        u = self.compute_displacement()
+        return self.spring_energies(u) if u is not None else None
+
+    def compute_max_stress(self) -> float | None:
+        """Maximale Spannung (löst intern). None bei Singularität."""
+        u = self.compute_displacement()
+        return self.max_stress(u) if u is not None else None
 
     def detect_symmetry(self, eps: float = 1e-6) -> tuple[bool, dict[int, int] | None]:
         """Prüft vertikale Symmetrie. Gibt (is_symmetric, mirror_map) zurück."""

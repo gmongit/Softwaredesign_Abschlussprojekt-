@@ -1,11 +1,11 @@
-import numpy as np
 from dataclasses import dataclass, field
 
 from core.model.structure import Structure
 from core.db.material_store import material_store
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, OptimizationHistory
 from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
-from core.solver.solver import solve
+from core.optimization.simp_optimizer import SIMPOptimizer, SIMPHistory
+from core.optimization.support_rebuilder import rebuild_support, RebuildResult, _deactivate_nodes
 
 _TERMINAL_REASONS = {
     "Ziel-Massenanteil erreicht",
@@ -47,7 +47,7 @@ def validate_structure(structure: Structure) -> StructureValidation:
         result.errors.append("Struktur nicht zusammenhängend oder Lastpfad unterbrochen")
 
     if result.ok:
-        u = compute_displacement(structure)
+        u = structure.compute_displacement()
         if u is None:
             result.errors.append("Struktur ist bereits singulär (nicht lösbar)")
 
@@ -223,33 +223,55 @@ def _validate_boundary_conditions(structure: Structure):
         raise ValueError("Struktur ist nicht zusammenhängend oder Lastpfad zu Lager unterbrochen.")
 
 
-
-def compute_displacement(structure: Structure) -> np.ndarray | None:
-    """Löst das Gleichungssystem K·u = F. Gibt None bei singulärer Matrix zurück."""
-    K = structure.assemble_K()
-    F = structure.assemble_F()
-    fixed = structure.fixed_dofs()
-    return solve(K, F, fixed)
+def run_rebuild_support(structure: Structure, **kwargs) -> RebuildResult:
+    """Nachverstärkung: reaktiviert Knoten zur Stress-Reduktion."""
+    return rebuild_support(structure, **kwargs)
 
 
-def compute_energies(structure: Structure) -> np.ndarray | None:
-    """Berechnet Formänderungsenergie pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.spring_energies(u)
+def undo_rebuild(structure: Structure, result: RebuildResult) -> None:
+    """Macht die Nachverstärkung rückgängig."""
+    if result.reactivated_node_ids:
+        _deactivate_nodes(structure, result.reactivated_node_ids)
 
 
-def compute_forces(structure: Structure) -> np.ndarray | None:
-    """Berechnet Axialkraft pro Feder. Gibt None bei singulärer Matrix zurück."""
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.spring_forces(u)
+def run_simp_optimization(
+    structure: Structure,
+    material_name: str | None,
+    beam_area_mm2: float,
+    volume_fraction: float = 0.5,
+    penalty: float = 3.0,
+    max_iters: int = 100,
+    eta: float = 0.5,
+    move_limit: float = 0.2,
+    tol: float = 1e-3,
+    on_iter=None,
+) -> SIMPHistory:
+    _validate_boundary_conditions(structure)
 
+    if not material_store.list_materials():
+        raise ValueError("Kein Material in der Datenbank hinterlegt.")
+    if material_name is None:
+        raise ValueError("Kein Material ausgewählt.")
+    mat = material_store.load_material(material_name)
 
-def compute_max_stress(structure: Structure) -> float | None:
-    u = compute_displacement(structure)
-    if u is None:
-        return None
-    return structure.max_stress(u)
+    e_pa = mat.e_modul * 1e9
+    area_m2 = beam_area_mm2 * 1e-6
+    density = mat.dichte
+
+    structure.update_spring_stiffnesses(e_pa, area_m2, density)
+
+    opt = SIMPOptimizer(
+        e_modul_pa=e_pa,
+        a_min=area_m2 * 1e-6,
+        a_max=area_m2,
+        volume_fraction=volume_fraction,
+        penalty=penalty,
+        eta=eta,
+        move_limit=move_limit,
+        tol=tol,
+    )
+
+    hist = opt.run(structure, max_iters=max_iters, on_iter=on_iter)
+    opt.post_process(structure, threshold_fraction=0.01)
+
+    return hist

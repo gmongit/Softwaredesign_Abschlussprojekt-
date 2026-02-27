@@ -6,7 +6,6 @@ import networkx as nx
 import numpy as np
 
 from core.model.structure import Structure
-from core.solver.solver import solve
 
 
 class OptimizerBase(ABC):
@@ -141,10 +140,7 @@ class OptimizerBase(ABC):
                 spring.active = True
 
     def _solve_structure(self, structure: Structure) -> np.ndarray | None:
-        K = structure.assemble_K()
-        F = structure.assemble_F()
-        fixed = structure.fixed_dofs()
-        return solve(K, F, fixed)
+        return structure.compute_displacement()
 
     def _exceeds_stress(self, structure: Structure, u: np.ndarray, max_stress: float | None) -> bool:
         if max_stress is None:

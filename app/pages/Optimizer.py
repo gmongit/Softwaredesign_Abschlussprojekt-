@@ -2,7 +2,7 @@ import streamlit as st
 from app.shared import (
     show_structure_status, show_stop_reason, show_export_buttons,
     gif_generation_dialog, material_sidebar,
-    show_heatmap_view, show_deformation_view,
+    show_heatmap_view, show_loadpaths_view, show_deformation_view,
     make_progress_callback,
 )
 from app.service.optimization_service import (
@@ -11,12 +11,52 @@ from app.service.optimization_service import (
     continue_optimization,
     is_retryable,
     validate_structure,
+    run_rebuild_support,
+    undo_rebuild,
 )
 from app.plots import (
     plot_structure,
     plot_replay_structure,
     generate_replay_gif,
 )
+
+
+@st.dialog("Nachverstärkung", width="small")
+def _rebuild_dialog():
+    st.markdown("**Einstellungen**")
+    top_pct = st.slider("Top-Federn (%)", 0.1, 10.0, 2.0, 0.1)
+    min_stress = st.slider("Min. Last-Schwelle (%)", 60, 99, 75, 1)
+    min_imp = st.slider("Min. Verbesserung (%)", 1, 20, 5, 1)
+
+    if st.button("▶ Starten", type="primary", width="stretch"):
+        progress = st.progress(0.0, text="Kandidaten werden gesucht...")
+        status = st.empty()
+
+        def _on_progress(tested, total):
+            progress.progress(
+                tested / total,
+                text=f"Kombination {tested} / {total}",
+            )
+
+        result = run_rebuild_support(
+            st.session_state.structure,
+            min_improvement=min_imp / 100,
+            top_percent=top_pct / 100,
+            min_stress_pct=min_stress / 100,
+            on_progress=_on_progress,
+        )
+        progress.empty()
+
+        st.session_state.rebuild_result = result
+        status.caption(
+            f"{result.n_candidates} Kandidaten in {result.n_clusters} Cluster(n) — "
+            f"{result.n_combos_tested} / {result.n_combos_total} Kombinationen getestet"
+        )
+        if result.reactivated_node_ids:
+            st.success(result.message)
+            st.rerun()
+        else:
+            st.warning(result.message)
 
 
 # --- UI ---
@@ -59,6 +99,7 @@ with st.sidebar:
             _live_ph.empty()
             st.session_state.history = hist
             st.session_state.gif_bytes = None
+            st.session_state.rebuild_result = None
         except ValueError as e:
             st.error(str(e))
 
@@ -104,6 +145,12 @@ with st.sidebar:
             except ValueError as e:
                 st.error(str(e))
 
+    # --- Nachverstärkung ---
+    if st.session_state.history is not None:
+        st.markdown("---")
+        if st.button("🔧 Nachverstärkung (Beta)"):
+            _rebuild_dialog()
+
 # --- Status ---
 if st.session_state.history is not None and st.session_state.history.stop_reason:
     show_stop_reason(
@@ -113,11 +160,20 @@ if st.session_state.history is not None and st.session_state.history.stop_reason
 
 # --- Visualisierung ---
 if st.session_state.history is not None:
+    rb = st.session_state.get("rebuild_result")
+    has_rebuild = rb is not None
+
+    # Meldung vom Rebuild anzeigen (auch ohne reaktivierte Knoten)
+    if rb is not None and rb.message and not rb.reactivated_node_ids:
+        st.warning(rb.message)
+
     st.markdown("**Ansicht**")
+    options = ["Struktur", "Heatmap", "Lastpfade", "Verformung", "Replay"]
+    if has_rebuild:
+        options.append("Nachverstärkung")
     view = st.segmented_control(
-        "Ansicht",
-        options=["Struktur", "Heatmap", "Lastpfade", "Verformung", "Replay"],
-        default="Heatmap",
+        "Ansicht", options=options,
+        default="Nachverstärkung" if has_rebuild else "Heatmap",
         label_visibility="collapsed",
     )
 
@@ -131,32 +187,7 @@ if st.session_state.history is not None:
         fig = show_heatmap_view(st.session_state.structure)
 
     elif view == "Lastpfade":
-        u = compute_displacement(st.session_state.structure)
-        energies = compute_forces(st.session_state.structure)
-
-        if u is None or energies is None:
-            st.warning("Lastpfade nicht berechenbar – optimierte Struktur ist singulär.")
-        else:
-            arrow_scale = st.slider("Pfeil-Skalierung", 0.1, 1.0, 1.0, 0.1)
-
-            n_springs = len(st.session_state.structure.springs)
-
-            show_top = st.slider(
-                "Top-Stäbe anzeigen",
-                min_value=1,
-                max_value=n_springs,
-                value=min(80, n_springs),
-                step=1
-            )
-
-            fig = plot_load_paths_with_arrows(
-                st.session_state.structure,
-                u=u,
-                energies=energies,
-                arrow_scale=arrow_scale,
-                top_n=show_top,
-            )
-            st.plotly_chart(fig, width="stretch")
+        fig = show_loadpaths_view(st.session_state.structure)
 
     elif view == "Verformung":
         fig = show_deformation_view(st.session_state.structure)
@@ -166,12 +197,18 @@ if st.session_state.history is not None:
         n_steps = len(hist.removed_nodes_per_iter)
 
         if n_steps == 0:
-            st.info("Keine Iterationsdaten vorhanden. Bitte Optimierung erneut starten.")
+            st.info("Keine Iterationsdaten vorhanden.")
         else:
             step = st.slider("Schritt", 0, n_steps, 0, key="replay_slider")
 
-            mass_at_step = hist.mass_fraction[step] if step < len(hist.mass_fraction) else hist.mass_fraction[-1]
-            removed_count = sum(len(hist.removed_nodes_per_iter[s]) for s in range(step))
+            mass_at_step = (
+                hist.mass_fraction[step]
+                if step < len(hist.mass_fraction)
+                else hist.mass_fraction[-1]
+            )
+            removed_count = sum(
+                len(hist.removed_nodes_per_iter[s]) for s in range(step)
+            )
             c1, c2, c3 = st.columns(3)
             c1.metric("Schritt", f"{step} / {n_steps}")
             c2.metric("Massenanteil", f"{mass_at_step:.1%}")
@@ -180,48 +217,70 @@ if st.session_state.history is not None:
             removed_so_far: set = set()
             for s in range(max(0, step - 1)):
                 removed_so_far.update(hist.removed_nodes_per_iter[s])
-            just_removed: set = set(hist.removed_nodes_per_iter[step - 1]) if step > 0 else set()
+            just_removed: set = (
+                set(hist.removed_nodes_per_iter[step - 1]) if step > 0 else set()
+            )
 
-            fig = plot_replay_structure(st.session_state.structure, removed_so_far, just_removed)
+            fig = plot_replay_structure(
+                st.session_state.structure, removed_so_far, just_removed,
+            )
             st.plotly_chart(fig, width='stretch')
 
             st.divider()
             if st.button("🎬 GIF generieren"):
                 gif_generation_dialog(
-                    st.session_state.structure,
-                    hist,
-                    generate_replay_gif
+                    st.session_state.structure, hist, generate_replay_gif,
                 )
 
-    if fig is not None and view != "Replay":
+    elif view == "Nachverstärkung" and rb is not None:
+        fig = plot_structure(
+            st.session_state.structure,
+            highlight_nodes=rb.reactivated_node_ids,
+        )
+        st.plotly_chart(fig, width='stretch')
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Reaktivierte Knoten", len(rb.reactivated_node_ids))
+        c2.metric("Stress vorher", f"{rb.stress_before / 1e6:.1f} MPa")
+        c3.metric("Stress nachher", f"{rb.stress_after / 1e6:.1f} MPa")
+
+        if rb.mass_after > 0:
+            delta = rb.mass_after - rb.mass_before
+            st.markdown(
+                f"Massenanteil: {rb.mass_before:.1%} → {rb.mass_after:.1%} "
+                f"**+{delta:.1%}**"
+            )
+
+        if rb.message:
+            st.info(rb.message)
+
+        if rb.reactivated_node_ids:
+            if st.button("↩ Nachverstärkung rückgängig"):
+                undo_rebuild(st.session_state.structure, rb)
+                st.session_state.rebuild_result = None
+                st.rerun()
+
+    if fig is not None and view not in ("Replay", "Nachverstärkung"):
         st.divider()
         base = st.session_state.get("case_name") or "struktur"
         show_export_buttons(fig, base)
 
     # --- Metriken ---
-    # --- Metriken ---
     structure = st.session_state.structure
     is_sym, _ = structure.detect_symmetry()
-
-    current_mass = structure.total_mass()
-    initial_mass = float(getattr(structure, "_initial_mass", 0.0))
-    removed_mass = max(0.0, initial_mass - current_mass)
-
-
-    c1, c2, c3 = st.columns(3)
-    c4, c5, c6 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Aktive Knoten", structure.active_node_count())
     c2.metric("Gesamt Knoten", structure.total_node_count())
     c3.metric("Massenanteil", f"{structure.current_mass_fraction():.1%}")
-    c4.metric("Masse", f"{current_mass:.3f} kg")
-    c5.metric("Entfernte Masse", f"{removed_mass:.3f} kg")
-    c6.metric("Symmetrie", "Symmetrisch" if is_sym else "Asymmetrisch")
+    c4.metric("Symmetrie", "Symmetrisch" if is_sym else "Asymmetrisch")
 
     # --- Optimierungsverlauf ---
     hist = st.session_state.history
     if hist is not None and len(hist.mass_fraction) > 0:
         st.markdown("**Optimierungsverlauf**")
-        st.line_chart(hist.mass_fraction, x_label="Iteration", y_label="Massenanteil")
+        st.line_chart(
+            hist.mass_fraction, x_label="Iteration", y_label="Massenanteil",
+        )
 
 else:
     st.info("Starte die Optimierung über die Sidebar.")

@@ -20,6 +20,8 @@ class RebuildResult:
     reactivated_node_ids: list[int] = field(default_factory=list)
     stress_before: float = 0.0
     stress_after: float = 0.0
+    mass_before: float = 0.0
+    mass_after: float = 0.0
     n_candidates: int = 0
     n_clusters: int = 0
     n_combos_total: int = 0
@@ -114,10 +116,11 @@ def rebuild_support(
     min_improvement: float = 0.05,
     top_percent: float = 0.02,
     min_stress_pct: float = 0.75,
-    on_progress: Callable[[int, int, float], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> RebuildResult:
     """Cluster-basierte Nachverstärkung durch Knoten-Reaktivierung."""
     result = RebuildResult()
+    result.mass_before = structure.current_mass_fraction()
 
     u = structure.compute_displacement()
     if u is None:
@@ -177,7 +180,7 @@ def rebuild_support(
     # Symmetrie-Filterung der Cluster-Inhalte
     if mirror_map:
         reduced_clusters: list[list[int]] = []
-        global_seen: set[int] = set()  
+        global_seen: set[int] = set()
         for cluster in clusters:
             one_side: list[int] = []
             for nid in cluster:
@@ -195,8 +198,7 @@ def rebuild_support(
 
     cluster_solutions: list[list[int]] = [] # pro Cluster
     tested = 0
-    
-    # Lokale Optimierung/ pro Cluster
+
     for cluster in clusters:
         n = len(cluster)
         c_best_combo: list[int] = []
@@ -207,23 +209,21 @@ def rebuild_support(
             for combo in combinations(cluster, size):
                 tested += 1
                 act_list = _expand_with_mirrors(list(combo), mirror_map) if mirror_map else list(combo)
-                
-               
                 to_toggle = [nid for nid in act_list if not structure.nodes[nid].active]
-                
+
                 _activate_nodes(structure, to_toggle)
                 u_trial = structure.compute_displacement()
-                
+
                 if u_trial is not None:
                     t_stress = structure.max_stress(u_trial)
-                    reduct = (stress_before - t_stress) / stress_before
-                    if reduct >= min_improvement:
+                    if t_stress < c_best_stress:
+                        reduct = (stress_before - t_stress) / stress_before
                         score = reduct / sqrt(len(combo))
                         if score > c_best_score or (score == c_best_score and t_stress < c_best_stress):
                             c_best_score, c_best_combo, c_best_stress = score, act_list, t_stress
 
                 _deactivate_nodes(structure, to_toggle)
-                if on_progress: on_progress(tested, total_local_combos, 0.0)
+                if on_progress: on_progress(tested, total_local_combos)
 
         if c_best_combo:
             cluster_solutions.append(c_best_combo)
@@ -231,23 +231,23 @@ def rebuild_support(
     # Globale Optimierung
     best_final_nodes: list[int] = []
     best_final_stress = stress_before
-    
+
     if cluster_solutions:
         for r in range(1, len(cluster_solutions) + 1):
             for combo in combinations(cluster_solutions, r):
                 flat_combo = list(set(nid for sub in combo for nid in sub))
                 to_toggle = [nid for nid in flat_combo if not structure.nodes[nid].active]
-                
+
                 _activate_nodes(structure, to_toggle)
                 u_trial = structure.compute_displacement()
-                
+
                 if u_trial is not None:
                     t_stress = structure.max_stress(u_trial)
                     # Nur akzeptieren, wenn es den globalen Bestwert verbessert
                     if t_stress < best_final_stress:
                         best_final_stress = t_stress
                         best_final_nodes = flat_combo
-                
+
                 _deactivate_nodes(structure, to_toggle)
 
     result.n_combos_tested = tested
@@ -257,6 +257,7 @@ def rebuild_support(
         _activate_nodes(structure, best_final_nodes)
         result.reactivated_node_ids = best_final_nodes
         result.stress_after = best_final_stress
+        result.mass_after = structure.current_mass_fraction()
         reduction = (stress_before - best_final_stress) / stress_before * 100
         result.message = (
             f"{len(best_final_nodes)} Knoten reaktiviert — Stress von "

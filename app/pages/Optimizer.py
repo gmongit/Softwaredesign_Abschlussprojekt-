@@ -12,6 +12,7 @@ from app.service.optimization_service import (
     is_retryable,
     validate_structure,
     run_rebuild_support,
+    undo_rebuild,
 )
 from app.plots import (
     plot_structure,
@@ -31,10 +32,10 @@ def _rebuild_dialog():
         progress = st.progress(0.0, text="Kandidaten werden gesucht...")
         status = st.empty()
 
-        def _on_progress(tested, total, best_pct):
+        def _on_progress(tested, total):
             progress.progress(
                 tested / total,
-                text=f"Kombination {tested} / {total} | Beste Reduktion: {best_pct:.1f}%",
+                text=f"Kombination {tested} / {total}",
             )
 
         result = run_rebuild_support(
@@ -243,8 +244,21 @@ if st.session_state.history is not None:
         c2.metric("Stress vorher", f"{rb.stress_before / 1e6:.1f} MPa")
         c3.metric("Stress nachher", f"{rb.stress_after / 1e6:.1f} MPa")
 
+        if rb.mass_after > 0:
+            delta = rb.mass_after - rb.mass_before
+            st.markdown(
+                f"Massenanteil: {rb.mass_before:.1%} → {rb.mass_after:.1%} "
+                f"**+{delta:.1%}**"
+            )
+
         if rb.message:
             st.info(rb.message)
+
+        if rb.reactivated_node_ids:
+            if st.button("↩ Nachverstärkung rückgängig"):
+                undo_rebuild(st.session_state.structure, rb)
+                st.session_state.rebuild_result = None
+                st.rerun()
 
     if fig is not None and view not in ("Replay", "Nachverstärkung"):
         st.divider()

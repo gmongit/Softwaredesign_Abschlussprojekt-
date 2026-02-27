@@ -4,7 +4,7 @@ from core.model.structure import Structure
 from core.db.material_store import material_store
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, OptimizationHistory
 from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
-from core.optimization.support_rebuilder import rebuild_support, RebuildResult
+from core.optimization.support_rebuilder import rebuild_support, RebuildResult, _deactivate_nodes
 
 _TERMINAL_REASONS = {
     "Ziel-Massenanteil erreicht",
@@ -225,3 +225,9 @@ def _validate_boundary_conditions(structure: Structure):
 def run_rebuild_support(structure: Structure, **kwargs) -> RebuildResult:
     """Nachverstärkung: reaktiviert Knoten zur Stress-Reduktion."""
     return rebuild_support(structure, **kwargs)
+
+
+def undo_rebuild(structure: Structure, result: RebuildResult) -> None:
+    """Macht die Nachverstärkung rückgängig."""
+    if result.reactivated_node_ids:
+        _deactivate_nodes(structure, result.reactivated_node_ids)

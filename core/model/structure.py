@@ -249,8 +249,31 @@ class Structure:
                 continue
             ni = self.nodes[spring.node_i]
             nj = self.nodes[spring.node_j]
+            spring.area = beam_area_m2  # For SIMP optimizer
             spring.k = spring.compute_k(ni, nj, e_modul_pa, beam_area_m2)
         self._initial_mass = self.total_mass()
+
+    def update_spring_stiffnesses_from_areas(self, e_modul_pa: float) -> None:
+        """Updates k = E * A_e / L for each spring based on stored spring.area."""
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            spring.k = e_modul_pa * spring.area / spring.length(ni, nj)
+
+    def total_volume_from_areas(self) -> float:
+        """Calculates total volume V = Σ(A_e * L_e) of all active springs."""
+        total = 0.0
+        for spring in self.springs:
+            if not spring.active:
+                continue
+            ni = self.nodes[spring.node_i]
+            nj = self.nodes[spring.node_j]
+            if not (ni.active and nj.active):
+                continue
+            total += spring.area * spring.length(ni, nj)
+        return total
 
     def total_mass(self) -> float:
         """Summe der Massen aller aktiven Stäbe."""

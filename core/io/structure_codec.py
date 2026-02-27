@@ -32,12 +32,14 @@ def structure_to_dict(structure: Structure) -> dict[str, Any]:
     sj: list[int] = []
     sk: list[float] = []
     sa: list[int] = []
+    sarea: list[float] = []
 
     for s in structure.springs:
         si.append(int(s.node_i))
         sj.append(int(s.node_j))
         sk.append(float(s.k))
         sa.append(1 if s.active else 0)
+        sarea.append(float(s.area))
 
     return {
         "format": "structure_v2_arrays",
@@ -55,6 +57,7 @@ def structure_to_dict(structure: Structure) -> dict[str, Any]:
             "j": sj,
             "k": sk,
             "active": sa,
+            "area": sarea,
         },
     }
 
@@ -92,6 +95,7 @@ def structure_from_dict(data: dict[str, Any]) -> Structure:
         sj = list(sd["j"])
         sk = list(sd["k"])
         sa = list(sd.get("active", [1] * len(si)))
+        sarea = list(sd.get("area", [0.0] * len(si)))
 
         springs: list[Spring] = []
         for t in range(len(si)):
@@ -101,6 +105,7 @@ def structure_from_dict(data: dict[str, Any]) -> Structure:
                     node_j=int(sj[t]),
                     k=float(sk[t]),
                     active=bool(sa[t]),
+                    area=float(sarea[t]) if t < len(sarea) else 0.0,
                 )
             )
 

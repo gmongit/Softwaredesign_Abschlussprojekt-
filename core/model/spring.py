@@ -12,6 +12,7 @@ class Spring:
     node_j: int
     k: float
     active: bool = True
+    area: float = 0.0  # Per-bar cross-section area for SIMP optimizer [m²]
 
     def length(self, ni: Node, nj: Node) -> float:
         dx = nj.x - ni.x

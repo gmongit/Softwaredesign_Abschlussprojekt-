@@ -4,6 +4,7 @@ from core.model.structure import Structure
 from core.db.material_store import material_store
 from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, OptimizationHistory
 from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
+from core.optimization.simp_optimizer import SIMPOptimizer, SIMPHistory
 from core.optimization.support_rebuilder import rebuild_support, RebuildResult, _deactivate_nodes
 
 _TERMINAL_REASONS = {
@@ -231,3 +232,46 @@ def undo_rebuild(structure: Structure, result: RebuildResult) -> None:
     """Macht die Nachverstärkung rückgängig."""
     if result.reactivated_node_ids:
         _deactivate_nodes(structure, result.reactivated_node_ids)
+
+
+def run_simp_optimization(
+    structure: Structure,
+    material_name: str | None,
+    beam_area_mm2: float,
+    volume_fraction: float = 0.5,
+    penalty: float = 3.0,
+    max_iters: int = 100,
+    eta: float = 0.5,
+    move_limit: float = 0.2,
+    tol: float = 1e-3,
+    on_iter=None,
+) -> SIMPHistory:
+    _validate_boundary_conditions(structure)
+
+    if not material_store.list_materials():
+        raise ValueError("Kein Material in der Datenbank hinterlegt.")
+    if material_name is None:
+        raise ValueError("Kein Material ausgewählt.")
+    mat = material_store.load_material(material_name)
+
+    e_pa = mat.e_modul * 1e9
+    area_m2 = beam_area_mm2 * 1e-6
+    density = mat.dichte
+
+    structure.update_spring_stiffnesses(e_pa, area_m2, density)
+
+    opt = SIMPOptimizer(
+        e_modul_pa=e_pa,
+        a_min=area_m2 * 1e-6,
+        a_max=area_m2,
+        volume_fraction=volume_fraction,
+        penalty=penalty,
+        eta=eta,
+        move_limit=move_limit,
+        tol=tol,
+    )
+
+    hist = opt.run(structure, max_iters=max_iters, on_iter=on_iter)
+    opt.post_process(structure, threshold_fraction=0.01)
+
+    return hist

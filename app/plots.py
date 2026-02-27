@@ -581,3 +581,100 @@ def plot_load_paths_with_arrows(structure, u, energies, arrow_scale=1.0, top_n=8
     return fig
 
 
+def plot_simp_structure(structure: Structure, a_max: float | None = None) -> go.Figure:
+    areas = [s.area for s in structure.springs if s.active]
+    if not areas:
+        fig = go.Figure()
+        fig.update_layout(**_base_layout())
+        return fig
+
+    a_max_val = a_max or max(areas) if areas else 1.0
+    if a_max_val <= 0:
+        a_max_val = 1.0
+
+    fig = go.Figure()
+
+    for spring in structure.springs:
+        if not spring.active:
+            continue
+        ni = structure.nodes[spring.node_i]
+        nj = structure.nodes[spring.node_j]
+        if not (ni.active and nj.active):
+            continue
+
+        t = spring.area / a_max_val
+        width = 0.5 + t * 7.5
+
+        r = int(30 + (1 - t) * 100)
+        g = int(80 + (1 - t) * 100)
+        b = int(180 + (1 - t) * 40)
+        alpha = 0.15 + 0.85 * t
+        color = f"rgba({r},{g},{b},{alpha})"
+
+        fig.add_trace(go.Scatter(
+            x=[ni.x, nj.x],
+            y=[ni.y, nj.y],
+            mode="lines",
+            line=dict(color=color, width=width),
+            hovertext=f"A = {spring.area*1e6:.2f} mm² ({t*100:.1f}%)",
+            hoverinfo="text",
+            showlegend=False,
+        ))
+
+    nx_vals, ny_vals, colors, symbols, sizes, hover, node_ids = _node_traces(structure)
+    fig.add_trace(go.Scatter(
+        x=nx_vals, y=ny_vals,
+        mode="markers",
+        marker=dict(color=colors, size=sizes, symbol=symbols,
+                    line=dict(width=1, color="#222")),
+        text=hover,
+        hoverinfo="text",
+        customdata=node_ids,
+        showlegend=False,
+    ))
+
+    fig.update_layout(**_base_layout())
+    return fig
+
+
+def plot_simp_convergence(history) -> go.Figure:
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Compliance", "Massenanteil"),
+        vertical_spacing=0.12,
+    )
+
+    fig.add_trace(go.Scatter(
+        y=history.compliance,
+        mode="lines+markers",
+        name="Compliance",
+        line=dict(color="#FF6B35", width=2),
+        marker=dict(size=3),
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        y=history.volume_fraction,
+        mode="lines+markers",
+        name="Massenanteil",
+        line=dict(color="#4A90D9", width=2),
+        marker=dict(size=3),
+    ), row=2, col=1)
+
+    fig.update_layout(
+        paper_bgcolor="#1A1A2E",
+        plot_bgcolor="#16213E",
+        font=dict(color="white"),
+        margin=dict(l=60, r=10, t=40, b=40),
+        height=500,
+        showlegend=False,
+    )
+    for i in range(1, 3):
+        fig.update_xaxes(gridcolor="#2A2A4A", row=i, col=1)
+        fig.update_yaxes(gridcolor="#2A2A4A", row=i, col=1)
+
+    return fig
+
+

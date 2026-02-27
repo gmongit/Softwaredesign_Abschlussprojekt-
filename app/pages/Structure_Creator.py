@@ -254,15 +254,15 @@ elif view == "Zeichnen":
         buf.seek(0)
 
         # --- DEBUG ---
-        gray = np.asarray(pil_rgb.convert("L"), dtype=np.float32)
-        with st.expander("🐛 Debug-Info", expanded=False):
-            st.write(f"Canvas image_data shape: `{arr.shape}`, dtype: `{arr.dtype}`")
-            st.write(f"Composited size: `{pil_rgb.size}` (B×H)")
-            st.write(f"Grayscale — min: `{gray.min():.0f}`, max: `{gray.max():.0f}`, mean: `{gray.mean():.1f}`")
-            dark_px = int(np.sum(gray < 128))
-            st.write(f"Dunkle Pixel (<128): `{dark_px}` / `{gray.size}` = `{dark_px/gray.size*100:.1f}%`")
-            st.caption("Composited Bild (was an image_to_binary_grid geht):")
-            st.image(pil_rgb, width="stretch")
+        # gray = np.asarray(pil_rgb.convert("L"), dtype=np.float32)
+        # with st.expander("🐛 Debug-Info", expanded=False):
+        #     st.write(f"Canvas image_data shape: `{arr.shape}`, dtype: `{arr.dtype}`")
+        #     st.write(f"Composited size: `{pil_rgb.size}` (B×H)")
+        #     st.write(f"Grayscale — min: `{gray.min():.0f}`, max: `{gray.max():.0f}`, mean: `{gray.mean():.1f}`")
+        #     dark_px = int(np.sum(gray < 128))
+        #     st.write(f"Dunkle Pixel (<128): `{dark_px}` / `{gray.size}` = `{dark_px/gray.size*100:.1f}%`")
+        #     st.caption("Composited Bild (was an image_to_binary_grid geht):")
+        #     st.image(pil_rgb, width="stretch")
         # --- END DEBUG ---
 
         grid = image_to_binary_grid(buf, _dnx, _dny, 128, coverage / 100.0)

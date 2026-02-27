@@ -98,6 +98,13 @@ elif view == "Bild hochladen":
 
     img_data = st.session_state.get("uploaded_image")
     if img_data is not None:
+        # Bild drehen
+        if "img_flipped" not in st.session_state:
+            st.session_state.img_flipped = False
+        if st.button("🔄 Bild drehen (180°)", key="rot_180"):
+            st.session_state.img_flipped = not st.session_state.img_flipped
+            st.rerun()
+
         # Einstellungen
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -115,8 +122,18 @@ elif view == "Bild hochladen":
         with col_h:
             img_height = st.number_input("Höhe (m)", min_value=0.5, value=2.0, step=0.5, key="img_height")
 
+        # Bild ggf. um 180° drehen
         img_data.seek(0)
-        grid = image_to_binary_grid(img_data, int(img_nx), int(img_ny), brightness, coverage / 100.0)
+        if st.session_state.img_flipped:
+            _pil = Image.open(img_data).rotate(180)
+            _buf = BytesIO()
+            _pil.save(_buf, format="PNG")
+            _buf.seek(0)
+            img_processed = _buf
+        else:
+            img_processed = img_data
+
+        grid = image_to_binary_grid(img_processed, int(img_nx), int(img_ny), brightness, coverage / 100.0)
 
         preview = np.where(grid, 0, 255).astype(np.uint8)
         preview_img = Image.fromarray(preview, mode="L").resize(
@@ -126,17 +143,17 @@ elif view == "Bild hochladen":
         left, right = st.columns(2)
         with left:
             st.caption("Original")
-            img_data.seek(0)
-            st.image(img_data, width='stretch')
+            img_processed.seek(0)
+            st.image(img_processed, width='stretch')
         with right:
             st.caption(f"Erkannt: {int(grid.sum())} / {int(img_nx) * int(img_ny)} Knoten aktiv")
             st.image(preview_img, width='stretch')
 
         # Struktur erstellen
         if st.button("✅ Struktur aus Bild erstellen", type="primary"):
-            img_data.seek(0)
+            img_processed.seek(0)
             s = create_structure_from_image(
-                img_data,
+                img_processed,
                 int(img_nx), int(img_ny),
                 brightness, coverage / 100.0,
                 float(img_width), float(img_height),
@@ -235,6 +252,18 @@ elif view == "Zeichnen":
         buf = BytesIO()
         pil_rgb.save(buf, format="PNG")
         buf.seek(0)
+
+        # --- DEBUG ---
+        gray = np.asarray(pil_rgb.convert("L"), dtype=np.float32)
+        with st.expander("🐛 Debug-Info", expanded=False):
+            st.write(f"Canvas image_data shape: `{arr.shape}`, dtype: `{arr.dtype}`")
+            st.write(f"Composited size: `{pil_rgb.size}` (B×H)")
+            st.write(f"Grayscale — min: `{gray.min():.0f}`, max: `{gray.max():.0f}`, mean: `{gray.mean():.1f}`")
+            dark_px = int(np.sum(gray < 128))
+            st.write(f"Dunkle Pixel (<128): `{dark_px}` / `{gray.size}` = `{dark_px/gray.size*100:.1f}%`")
+            st.caption("Composited Bild (was an image_to_binary_grid geht):")
+            st.image(pil_rgb, width="stretch")
+        # --- END DEBUG ---
 
         grid = image_to_binary_grid(buf, _dnx, _dny, 128, coverage / 100.0)
 

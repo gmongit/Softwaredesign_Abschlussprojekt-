@@ -139,6 +139,29 @@ class Structure:
 
         return list(direct | neighbors)
 
+    def cleanup_orphan_nodes(self) -> list[int]:
+        """Deaktiviert Knoten ohne aktive Federn. Gibt deaktivierte Node-IDs zurück."""
+        connected: set[int] = set()
+        for s in self.springs:
+            if not s.active:
+                continue
+            if self.nodes[s.node_i].active:
+                connected.add(s.node_i)
+            if self.nodes[s.node_j].active:
+                connected.add(s.node_j)
+
+        protected = self._protected_ids()
+        orphans: list[int] = []
+        for n in self.nodes:
+            if n.active and n.id not in connected and n.id not in protected:
+                n.active = False
+                orphans.append(n.id)
+        return orphans
+
+    def active_spring_count(self) -> int:
+        return sum(1 for s in self.springs if s.active
+                   and self.nodes[s.node_i].active and self.nodes[s.node_j].active)
+
     def assemble_K(self) -> sparse.csr_matrix:
         """Baut die globale Steifigkeitsmatrix als Sparse-Matrix (CSR)."""
         rows: list[int] = []

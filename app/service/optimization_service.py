@@ -6,6 +6,7 @@ from core.optimization.energy_based_optimizer import EnergyBasedOptimizer, Optim
 from core.optimization.dynamic_optimizer import DynamicOptimizer, DynamicOptimizationHistory
 from core.optimization.simp_optimizer import SIMPOptimizer, SIMPHistory
 from core.optimization.support_rebuilder import rebuild_support, RebuildResult, _deactivate_nodes
+from core.optimization.energy_based_optimizer_remove_springs import SpringRemovalOptimizer
 
 _TERMINAL_REASONS = {
     "Ziel-Massenanteil erreicht",
@@ -275,3 +276,70 @@ def run_simp_optimization(
     opt.post_process(structure, threshold_fraction=0.01)
 
     return hist
+
+
+def run_spring_optimization(
+    structure: Structure,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+    force: bool = False,
+):
+    """Analog zu run_optimization, aber entfernt Federn statt Knoten."""
+    _validate_boundary_conditions(structure)
+    opt = SpringRemovalOptimizer(
+        remove_fraction=remove_fraction,
+        start_factor=0.3,
+        ramp_iters=10,
+    )
+    return opt.run(
+        structure,
+        target_mass_fraction=target_mass_fraction,
+        max_iters=max_iters,
+        max_stress=max_stress,
+        on_iter=on_iter,
+        force=force,
+    )
+
+
+def optimize_structure_springs(
+    structure: Structure,
+    material_name: str | None,
+    beam_area_mm2: float,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+    force: bool = False,
+):
+    """Analog zu optimize_structure, aber entfernt Federn."""
+    prepare_structure(structure, material_name, beam_area_mm2)
+    return run_spring_optimization(
+        structure, remove_fraction, target_mass_fraction, max_iters,
+        max_stress=max_stress, on_iter=on_iter, force=force,
+    )
+
+
+def continue_spring_optimization(
+    structure: Structure,
+    history: OptimizationHistory,
+    remove_fraction: float,
+    target_mass_fraction: float,
+    max_iters: int,
+    max_stress: float | None = None,
+    on_iter=None,
+) -> None:
+    """Analog zu continue_optimization, aber für Feder-Entfernung."""
+    hist_new = run_spring_optimization(
+        structure, remove_fraction, target_mass_fraction, max_iters,
+        max_stress=max_stress, on_iter=on_iter,
+    )
+    history.mass_fraction.extend(hist_new.mass_fraction)
+    history.removed_per_iter.extend(hist_new.removed_per_iter)
+    history.removed_nodes_per_iter.extend(hist_new.removed_nodes_per_iter)
+    history.removed_springs_per_iter.extend(hist_new.removed_springs_per_iter)
+    history.max_displacement.extend(hist_new.max_displacement)
+    history.stop_reason = hist_new.stop_reason

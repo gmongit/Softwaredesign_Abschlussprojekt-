@@ -12,6 +12,7 @@ class OptimizationHistory:
     mass_fraction: list[float] = field(default_factory=list)
     removed_per_iter: list[int] = field(default_factory=list)
     removed_nodes_per_iter: list[list[int]] = field(default_factory=list)
+    removed_springs_per_iter: list[list[int]] = field(default_factory=list)
     active_nodes: list[int] = field(default_factory=list)
     max_displacement: list[float] = field(default_factory=list)
     stop_reason: str = ""
